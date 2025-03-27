@@ -23,7 +23,6 @@
 
 import ast
 import asyncio
-from asyncio import TimeoutError
 from typing import Callable, Optional
 import inspect
 import litellm
