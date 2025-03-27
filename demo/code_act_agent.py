@@ -6,7 +6,8 @@
 #     "litellm",
 #     "typer",
 #     "loguru",
-#     "aiohttp"
+#     "aiohttp",
+#     "quantalogic_pythonbox"
 # ]
 # ///
 #!/usr/bin/env -S uv run
@@ -29,13 +30,39 @@ import litellm
 import typer
 from loguru import logger
 import aiohttp
+from quantalogic_pythonbox import execute_async
 
 # Configure logging
 logger.add("action_gen.log", rotation="10 MB", level="DEBUG")
 app = typer.Typer()
 
+class ToolExecutor:
+    def __init__(self):
+        self.tools = {}
+
+    def register(self, tool: Callable):
+        self.tools[tool.name] = tool
+
+    async def execute(self, tool_name: str, **kwargs) -> str:
+        if tool_name not in self.tools:
+            raise ValueError(f"Tool {tool_name} not found")
+        
+        tool = self.tools[tool_name]
+        code = f"async def {tool.name}({', '.join([arg['name'] for arg in tool.arguments])}):\n    return {tool.name}({', '.join([arg['name'] for arg in tool.arguments])})"
+        
+        result = await execute_async(
+            code=code,
+            entry_point=tool.name,
+            kwargs=kwargs,
+            timeout=300
+        )
+        
+        if result.error:
+            raise RuntimeError(f"Tool execution failed: {result.error}")
+        return result.result
+
 # Tool creation function (unchanged)
-def make_tool(func: Callable, name: str, description: str, model: str = None) -> Callable:
+def make_tool(func: Callable, name: str, description: str, executor: ToolExecutor, model: str = None) -> Callable:
     """Create a callable tool from a function with metadata and docstring generation."""
     from typing import get_type_hints
     type_hints = get_type_hints(func)
@@ -76,8 +103,7 @@ def make_tool(func: Callable, name: str, description: str, model: str = None) ->
     async def tool(**kwargs) -> str:
         logger.info(f"Starting tool execution: {name}")
         try:
-            result = await func(**kwargs)
-            result = str(result)
+            result = await executor.execute(name, **kwargs)
             logger.info(f"Finished tool execution: {name}")
             return result
         except Exception as e:
@@ -89,79 +115,94 @@ def make_tool(func: Callable, name: str, description: str, model: str = None) ->
     tool.arguments = arguments
     tool.return_type = return_type
     tool.to_docstring = lambda: docstring
+    executor.register(tool)
     return tool
 
 # Define tools (updated)
-async def add(a: int, b: int) -> int:
+executor = ToolExecutor()
+
+def register_tool(func):
+    """Decorator to register a tool with the executor"""
+    name = func.__name__
+    description = func.__doc__ or ""
+    return make_tool(func, name, description, executor)
+
+@register_tool
+def add(a: int, b: int) -> int:
+    """Add two numbers"""
     return a + b
 
-async def multiply(x: int, y: int) -> int:
+@register_tool
+def multiply(x: int, y: int) -> int:
+    """Multiply two numbers"""
     return x * y
 
-async def concat(s1: str, s2: str) -> str:
+@register_tool
+def concat(s1: str, s2: str) -> str:
+    """Concatenate two strings"""
     return s1 + s2
 
+@register_tool
 async def wikipedia_search(query: str, timeout: float = 10.0) -> Optional[str]:
     """
     Performs an asynchronous search query using the Wikipedia API.
-    
-    Args:
-        query (str): The search query string to be executed
-        timeout (float): Request timeout in seconds (default: 10.0)
-    
-    Returns:
-        Optional[str]: The first paragraph of the Wikipedia article or None if no results found
     """
-    endpoint = "https://en.wikipedia.org/w/api.php"
-    
-    params = {
-        "action": "query",
-        "format": "json",
-        "list": "search",
-        "srsearch": query,
-        "srlimit": 1
-    }
-    
-    timeout_config = aiohttp.ClientTimeout(total=timeout)
-    
     try:
+        timeout_config = aiohttp.ClientTimeout(total=timeout)
         async with aiohttp.ClientSession(timeout=timeout_config) as session:
-            logger.info(f"Performing Wikipedia search for query: '{query}'")
-            
-            async with session.get(endpoint, params=params) as response:
-                response.raise_for_status()
-                
+            url = "https://en.wikipedia.org/w/api.php"
+            params = {
+                "action": "query",
+                "format": "json",
+                "list": "search",
+                "srsearch": query,
+                "srlimit": 1
+            }
+
+            async with session.get(url, params=params) as response:
+                if response.status != 200:
+                    logger.error(f"Wikipedia API returned status {response.status}")
+                    return None
+
                 data = await response.json()
-                
-                if data and 'query' in data and 'search' in data['query'] and data['query']['search']:
-                    page_title = data['query']['search'][0]['title']
-                    # Now get the extract for the found page
-                    params = {
-                        "action": "query",
-                        "format": "json",
-                        "prop": "extracts",
-                        "exintro": "1",
-                        "explaintext": "1",
-                        "titles": page_title
-                    }
-                    async with session.get(endpoint, params=params) as response:
-                        response.raise_for_status()
-                        data = await response.json()
-                        if data and 'query' in data and 'pages' in data['query']:
-                            pages = data['query']['pages']
-                            page_id = next(iter(pages))
-                            if page_id != '-1':
-                                return pages[page_id]['extract']
-                
-                logger.info("No relevant content found in Wikipedia search results")
-                return None
-                
-    except aiohttp.ClientError as e:
-        logger.error(f"Network error during Wikipedia search: {e}")
-        raise
+                if not data.get("query", {}).get("search"):
+                    return None
+
+                page_title = data["query"]["search"][0]["title"]
+                params = {
+                    "action": "query",
+                    "format": "json",
+                    "prop": "extracts",
+                    "exintro": True,
+                    "explaintext": True,
+                    "titles": page_title
+                }
+
+                async with session.get(url, params=params) as response:
+                    if response.status != 200:
+                        logger.error(f"Wikipedia API returned status {response.status}")
+                        return None
+
+                    data = await response.json()
+                    pages = data.get("query", {}).get("pages", {})
+                    if not pages:
+                        return None
+
+                    return next(iter(pages.values())).get("extract")
     except Exception as e:
         logger.exception(f"Unexpected error during Wikipedia search: {e}")
         return None
+
+@register_tool
+def agent_tool(system_prompt: str, prompt: str, temperature: float) -> str:
+    """
+    Use litellm to generate text using a language model.
+    """
+    return litellm.acompletion(
+        model="gemini/gemini-2.0-flash",
+        messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": prompt}],
+        temperature=temperature,
+    )
 
 # Updated generate_core with ReAct Loop
 async def generate_core(task: str, model: str, max_tokens: int, max_steps: int = 10) -> None:
@@ -178,24 +219,13 @@ async def generate_core(task: str, model: str, max_tokens: int, max_steps: int =
         logger.error("max-steps must be positive")
         raise typer.BadParameter("max-steps must be a positive integer")
 
-    # Define agent_tool wrapper
-    async def agent_tool(system_prompt: str, prompt: str, temperature: float) -> str:
-        """
-        Use litellm to generate text using a language model.
-        """
-        return await litellm.acompletion(
-            model=model,
-            messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": prompt}],
-            temperature=temperature,
-        )
-
     # Initialize tools
     tools = [
-        make_tool(add, "add_tool", "Adds two numbers and returns the sum."),
-        make_tool(multiply, "multiply_tool", "Multiplies two numbers and returns the product."),
-        make_tool(concat, "concat_tool", "Concatenates two strings."),
-        make_tool(agent_tool, "agent_tool", "Generates text using a language model."),
-        make_tool(wikipedia_search, "wiki_tool", "Performs a Wikipedia search and returns the first paragraph of the article.")
+        add,
+        multiply,
+        concat,
+        wikipedia_search,
+        agent_tool
     ]
 
     # Generate tool descriptions for the prompt
@@ -260,7 +290,7 @@ If you think the task is completed, respond with 'Stop: [final answer]'.
                     if not tool:
                         raise ValueError(f"Unknown tool: {tool_name}")
 
-                    result = await tool(**args_dict)
+                    result = await executor.execute(tool_name, **args_dict)
                     history += f"Action: {action_str}\nResult: {result}\n"
                     typer.echo(f"Result: {result}")
 
