@@ -5,7 +5,8 @@
 # dependencies = [
 #     "litellm",
 #     "typer",
-#     "loguru"
+#     "loguru",
+#     "aiohttp"
 # ]
 # ///
 
@@ -20,6 +21,7 @@ import inspect
 import litellm
 import typer
 from loguru import logger
+import aiohttp
 
 # Configure logging
 logger.add("action_gen.log", rotation="10 MB", level="DEBUG")
@@ -87,6 +89,7 @@ def make_tool(func: Callable, name: str, description: str, model: str = None) ->
     tool.to_docstring = lambda: docstring
     return tool
 
+
 # Define tools as callables
 async def add(a: int, b: int) -> int:
     return a + b
@@ -110,6 +113,43 @@ async def agent_func(system_prompt: str, prompt: str, temperature: float, model:
             max_tokens=1000
         )
         return response.choices[0].message.content.strip()
+
+async def duckduckgo_search(query: str) -> str:
+    """
+    Performs an asynchronous search query using the DuckDuckGo Instant Answer API.
+    
+    This function sends a request to DuckDuckGo's API with the specified query
+    and returns the abstract text from the search results. The abstract text
+    typically provides a concise summary of information related to the query.
+    
+    Args:
+        query (str): The search query string to send to DuckDuckGo.
+    
+    Returns:
+        str: The abstract text from the search results or 'No results found'
+             if no abstract is available.
+    
+    Raises:
+        aiohttp.ClientError: If there's an issue with the HTTP request.
+        json.JSONDecodeError: If the response cannot be parsed as JSON.
+    
+    Examples:
+        >>> import asyncio
+        >>> result = asyncio.run(duckduckgo_search("Python programming"))
+        >>> print(result)
+        'Python is a high-level, interpreted programming language...'
+    
+    Notes:
+        - The function doesn't handle URL encoding of special characters in the query.
+        - Only returns the AbstractText field from the API response.
+        - The DuckDuckGo API may have usage limitations or rate limits.
+    """
+    async with aiohttp.ClientSession() as session:
+        logger.info(f"Performing DuckDuckGo search for query: {query}")
+        async with session.get(f'https://api.duckduckgo.com/?q={query}&format=json') as response:
+            data = await response.json(content_type=None)
+            logger.info(f"DuckDuckGo search result: {data}")
+            return data.get('AbstractText', 'No results found')
 
 async def generate_program(task_description: str, tools: List[Callable], model: str, max_tokens: int) -> str:
     logger.debug(f"Generating program for task: {task_description}")
@@ -183,7 +223,8 @@ async def generate_core(task: str, model: str, max_tokens: int) -> None:
         make_tool(add, "add_tool", "Adds two numbers and returns the sum."),
         make_tool(multiply, "multiply_tool", "Multiplies two numbers and returns the product."),
         make_tool(concat, "concat_tool", "Concatenates two strings."),
-        make_tool(agent_tool_wrapper, "agent_tool", "Generates text using a language model.")
+        make_tool(agent_tool_wrapper, "agent_tool", "Generates text using a language model."),
+        make_tool(duckduckgo_search, "duckduckgo_tool", "Performs a DuckDuckGo search and returns the abstract text.")
     ]
 
     # Generate the program
