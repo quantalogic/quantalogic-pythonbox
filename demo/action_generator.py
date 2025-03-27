@@ -3,22 +3,26 @@
 # /// script
 # requires-python = ">=3.12"
 # dependencies = [
-#     "quantalogic
-#     "pathspec",
+#     "litellm",
+#     "typer",
+#     "loguru"
 # ]
 # ///
 
 
 import ast
 import asyncio
-import inspect
+from asyncio import TimeoutError
+from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from functools import partial
-from typing import Callable, List, Dict, Any, Optional
+from typing import Callable, Dict, List, Any, Optional
+
 import litellm
 import typer
 from loguru import logger
 
+# Configure logging
 logger.add("action_gen.log", rotation="10 MB", level="DEBUG")
 app = typer.Typer()
 
@@ -30,22 +34,18 @@ class ToolArgument:
     description: str
     required: bool
     default: Optional[str] = None
-    example: Optional[str] = None
 
 # Define base Tool class
 class Tool:
-    def __init__(self, name: str, description: str, arguments: List[ToolArgument], return_type: str, func: Callable):
+    def __init__(self, name: str, description: str, arguments: List[ToolArgument], return_type: str):
         self.name = name
         self.description = description
         self.arguments = arguments
         self.return_type = return_type
-        self.func = func
 
-    async def async_execute(self, **kwargs) -> Any:
-        """Execute the tool asynchronously."""
-        if asyncio.iscoroutinefunction(self.func):
-            return await self.func(**kwargs)
-        return self.func(**kwargs)
+    async def async_execute(self, **kwargs) -> str:
+        """Must be implemented by subclasses."""
+        raise NotImplementedError("Subclasses must implement async_execute")
 
     def to_docstring(self) -> str:
         """Convert the tool definition into a Google-style docstring with function signature."""
@@ -59,126 +59,252 @@ class Tool:
         args_doc = "\n".join(f"    {arg.name} ({arg.arg_type}): {arg.description}" for arg in self.arguments)
         return f'"""\n{signature}\n\n{self.description}\n\nArgs:\n{args_doc}\n\nReturns:\n    {self.return_type}: {self.description}\n"""'
 
-# Tool creation function
-def create_tool(func: Callable) -> Tool:
-    if not callable(func):
-        raise ValueError("Input must be a callable function")
-
-    try:
-        source = inspect.getsource(func).strip()
-        tree = ast.parse(source)
-    except (OSError, TypeError, SyntaxError) as e:
-        raise ValueError(f"Failed to parse function source: {e}")
-
-    if not tree.body or not isinstance(tree.body[0], (ast.FunctionDef, ast.AsyncFunctionDef)):
-        raise ValueError("Source must define a single function")
-    func_def = tree.body[0]
-
-    name = func_def.name
-    docstring = ast.get_docstring(func_def) or ""
-    description = docstring or f"Tool generated from {name}"
-    
-    from typing import get_type_hints
-    type_hints = get_type_hints(func)
-    type_map = {int: "int", str: "string", float: "float", bool: "boolean"}
-
-    args = func_def.args
-    defaults = [None] * (len(args.args) - len(args.defaults)) + [
-        ast.unparse(d) if isinstance(d, ast.AST) else str(d) for d in args.defaults
-    ]
-    arguments: List[ToolArgument] = []
-
-    for i, arg in enumerate(args.args):
-        arg_name = arg.arg
-        default = defaults[i]
-        hint = type_hints.get(arg_name, str)
-        arg_type = type_map.get(hint, "string")
-        arguments.append(ToolArgument(
-            name=arg_name,
-            arg_type=arg_type,
-            description=f"Argument {arg_name}",
-            required=default is None,
-            default=default
-        ))
-
-    return_type = type_map.get(type_hints.get("return", str), "string")
-    return Tool(name=name, description=description, arguments=arguments, return_type=return_type, func=func)
-
-# Define tool functions
-async def add(a: int, b: int) -> int:
-    """Add two numbers and return the sum."""
-    return a + b
-
-async def multiply(x: int, y: int) -> int:
-    """Multiply two numbers and return the product."""
-    return x * y
-
-async def concat(s1: str, s2: str) -> str:
-    """Concatenate two strings and return the result."""
-    return s1 + s2
-
-async def agent(system_prompt: str, prompt: str, temperature: float) -> str:
-    """Generate text using a language model based on a system prompt and user prompt."""
-    try:
-        response = await litellm.acompletion(
-            model="gemini/gemini-2.0-flash",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": prompt}
+# Define tool implementations
+class AddTool(Tool):
+    def __init__(self):
+        super().__init__(
+            name="add_tool",
+            description="Adds two numbers and returns the sum.",
+            arguments=[
+                ToolArgument(name="a", arg_type="int", description="First number", required=True),
+                ToolArgument(name="b", arg_type="int", description="Second number", required=True)
             ],
-            temperature=temperature,
-            max_tokens=1000
+            return_type="int"
         )
-        return response.choices[0].message.content.strip()
-    except Exception as e:
-        logger.error(f"Failed to generate text: {str(e)}")
-        raise typer.BadParameter(f"Failed to generate text: {str(e)}")
+    
+    async def async_execute(self, **kwargs) -> str:
+        logger.info(f"Starting tool execution: {self.name}")
+        a, b = int(kwargs["a"]), int(kwargs["b"])
+        logger.info(f"Adding {a} and {b}")
+        result = str(a + b)
+        logger.info(f"Finished tool execution: {self.name}")
+        return result
 
-# Rest of the code remains largely the same, just update the tools initialization
+class MultiplyTool(Tool):
+    def __init__(self):
+        super().__init__(
+            name="multiply_tool",
+            description="Multiplies two numbers and returns the product.",
+            arguments=[
+                ToolArgument(name="x", arg_type="int", description="First number", required=True),
+                ToolArgument(name="y", arg_type="int", description="Second number", required=True)
+            ],
+            return_type="int"
+        )
+    
+    async def async_execute(self, **kwargs) -> str:
+        logger.info(f"Starting tool execution: {self.name}")
+        x, y = int(kwargs["x"]), int(kwargs["y"])
+        logger.info(f"Multiplying {x} and {y}")
+        result = str(x * y)
+        logger.info(f"Finished tool execution: {self.name}")
+        return result
+
+class ConcatTool(Tool):
+    def __init__(self):
+        super().__init__(
+            name="concat_tool",
+            description="Concatenates two strings.",
+            arguments=[
+                ToolArgument(name="s1", arg_type="string", description="First string", required=True),
+                ToolArgument(name="s2", arg_type="string", description="Second string", required=True)
+            ],
+            return_type="string"
+        )
+    
+    async def async_execute(self, **kwargs) -> str:
+        logger.info(f"Starting tool execution: {self.name}")
+        s1, s2 = kwargs["s1"], kwargs["s2"]
+        logger.info(f"Concatenating '{s1}' and '{s2}'")
+        result = s1 + s2
+        logger.info(f"Finished tool execution: {self.name}")
+        return result
+
+class AgentTool(Tool):
+    def __init__(self, model: str = "gemini/gemini-2.0-flash"):
+        super().__init__(
+            name="agent_tool",
+            description="Generates text using a language model based on a system prompt and user prompt.",
+            arguments=[
+                ToolArgument(name="system_prompt", arg_type="string", description="System prompt to guide the model", required=True),
+                ToolArgument(name="prompt", arg_type="string", description="User prompt to generate a response for", required=True),
+                ToolArgument(name="temperature", arg_type="float", description="Temperature for generation (0 to 1)", required=True)
+            ],
+            return_type="string"
+        )
+        self.model = model
+    
+    async def async_execute(self, **kwargs) -> str:
+        logger.info(f"Starting tool execution: {self.name}")
+        system_prompt = kwargs["system_prompt"]
+        prompt = kwargs["prompt"]
+        temperature = float(kwargs["temperature"])
+
+        if not 0 <= temperature <= 1:
+            logger.error(f"Temperature {temperature} is out of range (0-1)")
+            raise ValueError("Temperature must be between 0 and 1")
+
+        logger.info(f"Generating text with model {self.model}, temperature {temperature}")
+        try:
+            async with AsyncExitStack():
+                response = await litellm.acompletion(
+                    model=self.model,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": prompt}
+                    ],
+                    temperature=temperature,
+                    max_tokens=1000
+                )
+                result = response.choices[0].message.content.strip()
+                logger.debug(f"Generated text: {result}")
+                logger.info(f"Finished tool execution: {self.name}")
+                return result
+        except TimeoutError as e:
+            logger.error(f"API call to {self.model} timed out")
+            raise TimeoutError(f"API call timed out: {str(e)}") from e
+        except Exception as e:
+            logger.error(f"Failed to generate text: {str(e)}")
+            raise RuntimeError(f"Text generation failed: {str(e)}")
+
 async def generate_program(task_description: str, tools: List[Tool], model: str, max_tokens: int) -> str:
     logger.debug(f"Generating program for task: {task_description}")
     tool_docstrings = "\n\n".join([tool.to_docstring() for tool in tools])
-    # ... rest of the function remains the same ...
+
+    prompt = f"""
+You are a Python code generator. Your task is to create a Python program that solves the following task:
+"{task_description}"
+
+You have access to the following pre-defined async tool functions:
+
+{tool_docstrings}
+
+Instructions:
+1. Generate a Python program as a single string.
+2. Include only 'import asyncio' as the import statement.
+3. Define an async function named 'main()' that solves the task.
+4. Use the pre-defined tool functions (e.g., add_tool, multiply_tool, concat_tool, agent_tool) directly by calling them with 'await' and the appropriate arguments.
+5. Do not redefine the tool functions; assume they are available in the namespace.
+6. Return the program as a Markdown code block (```python ... ```).
+7. Do not include asyncio.run(main()) or any 'if __name__ == "__main__":' block; the runtime will handle execution.
+8. Use multiline strings for all string variables, starting each string at the beginning of a line.
+9. Always print the result or key outputs at the end of the program.
+
+Example task: "Add 5 and 7 and print the result"
+Example output:
+```python
+import asyncio
+
+async def main():
+    result = await add_tool(a=5, b=7)
+    print(result)
+```
+"""
+    logger.debug(f"Prompt sent to litellm:\n{prompt}")
+
+    try:
+        response = await litellm.acompletion(
+            model=model,
+            messages=[
+                {"role": "system", "content": "You are a Python code generator."},
+                {"role": "user", "content": prompt}
+            ],
+            max_tokens=max_tokens,
+            temperature=0.3
+        )
+        generated_code = response.choices[0].message.content.strip()
+        logger.debug(f"Generated code:\n{generated_code}")
+    except Exception as e:
+        logger.error(f"Failed to generate code: {str(e)}")
+        raise typer.BadParameter(f"Failed to generate code: {str(e)}")
+
+    # Clean up Markdown markers
+    if generated_code.startswith("```python"):
+        generated_code = generated_code[len("```python"):].strip()
+    if generated_code.endswith("```"):
+        generated_code = generated_code[:-3].strip()
+
+    return generated_code
 
 async def generate_core(task: str, model: str, max_tokens: int) -> None:
     logger.info(f"Starting generate command for task: {task}")
     if not task.strip():
+        logger.error("Task description is empty")
         raise typer.BadParameter("Task description cannot be empty")
     if max_tokens <= 0:
+        logger.error("max-tokens must be positive")
         raise typer.BadParameter("max-tokens must be a positive integer")
 
-    # Initialize tools using create_tool
+    # Initialize tools
     tools = [
-        create_tool(add),
-        create_tool(multiply),
-        create_tool(concat),
-        create_tool(agent)
+        AddTool(),
+        MultiplyTool(),
+        ConcatTool(),
+        AgentTool(model=model)
     ]
 
-    # ... rest of the function remains similar, just update namespace ...
-    program = await generate_program(task, tools, model, max_tokens)
+    # Generate the program
+    try:
+        program = await generate_program(task, tools, model, max_tokens)
+    except Exception as e:
+        logger.error(f"Program generation failed: {str(e)}")
+        typer.echo(typer.style(f"Error: {str(e)}", fg=typer.colors.RED))
+        raise typer.Exit(code=1)
+
+    logger.debug(f"Generated program:\n{program}")
     typer.echo(typer.style("Generated Python Program:", fg=typer.colors.GREEN, bold=True))
     typer.echo(program)
 
-    # Validate and execute
-    ast_tree = ast.parse(program)
-    has_async_main = any(
-        isinstance(node, ast.AsyncFunctionDef) and node.name == "main"
-        for node in ast.walk(ast_tree)
-    )
-    if not has_async_main:
-        typer.echo(typer.style("Warning: Generated code lacks an async main() function", fg=typer.colors.YELLOW))
+    # Validate syntax
+    try:
+        ast_tree = ast.parse(program)
+        has_async_main = any(
+            isinstance(node, ast.AsyncFunctionDef) and node.name == "main"
+            for node in ast.walk(ast_tree)
+        )
+        if not has_async_main:
+            logger.warning("Generated code lacks an async main() function")
+            typer.echo(typer.style("Warning: Generated code lacks an async main() function", fg=typer.colors.YELLOW))
+            return
+    except SyntaxError as e:
+        logger.error(f"Syntax error in generated code: {str(e)}")
+        typer.echo(typer.style(f"Syntax error: {str(e)}", fg=typer.colors.RED))
         return
 
+    # Prepare namespace
     namespace: Dict[str, Callable] = {
         "asyncio": asyncio,
-        "add": partial(tools[0].async_execute),
-        "multiply": partial(tools[1].async_execute),
-        "concat": partial(tools[2].async_execute),
-        "agent": partial(tools[3].async_execute),
+        "add_tool": partial(AddTool().async_execute),
+        "multiply_tool": partial(MultiplyTool().async_execute),
+        "concat_tool": partial(ConcatTool().async_execute),
+        "agent_tool": partial(AgentTool(model=model).async_execute),
     }
 
-    # ... rest of execution logic remains the same ...
+    # Execute the program with timeout
+    typer.echo("\n" + typer.style("Executing the program:", fg=typer.colors.GREEN, bold=True))
+    try:
+        exec(program, namespace)
+        main_func = namespace.get("main")
+        if not main_func or not asyncio.iscoroutinefunction(main_func):
+            logger.error("No valid async main() function found")
+            typer.echo(typer.style("Error: No valid async main() function found", fg=typer.colors.RED))
+            return
+
+        async with asyncio.timeout(30):  # 30-second timeout
+            start_time = asyncio.get_event_loop().time()
+            result = await main_func()
+            execution_time = asyncio.get_event_loop().time() - start_time
+            logger.info(f"Execution completed in {execution_time:.2f} seconds")
+            typer.echo(typer.style(f"Execution completed in {execution_time:.2f} seconds", fg=typer.colors.GREEN))
+            if result is not None:
+                typer.echo("\n" + typer.style("Result:", fg=typer.colors.BLUE, bold=True))
+                typer.echo(str(result))
+    except TimeoutError:
+        logger.error("Execution timed out after 30 seconds")
+        typer.echo(typer.style("Error: Execution timed out after 30 seconds", fg=typer.colors.RED))
+    except Exception as e:
+        logger.error(f"Execution error: {str(e)}")
+        typer.echo(typer.style(f"Error: {str(e)}", fg=typer.colors.RED))
 
 @app.command()
 def generate(
