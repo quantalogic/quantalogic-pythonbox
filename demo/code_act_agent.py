@@ -9,16 +9,24 @@
 #     "aiohttp"
 # ]
 # ///
+#!/usr/bin/env -S uv run
+
+# /// script
+# requires-python = ">=3.12"
+# dependencies = [
+#     "litellm",
+#     "typer",
+#     "loguru",
+#     "aiohttp"
+# ]
+# ///
 
 import ast
 import asyncio
 from asyncio import TimeoutError
-from contextlib import AsyncExitStack
-from functools import partial
 from typing import Callable, Optional
 import inspect
 import litellm
-import urllib
 import typer
 from loguru import logger
 import aiohttp
