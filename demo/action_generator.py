@@ -151,6 +151,10 @@ async def duckduckgo_search(query: str) -> str:
             logger.info(f"DuckDuckGo search result: {data}")
             return data.get('AbstractText', 'No results found')
 
+async def display_result(result: str) -> None:
+    """ Display the result in a styled format. """
+    typer.echo(typer.style(f"Result: {result}", fg=typer.colors.GREEN))
+
 async def generate_program(task_description: str, tools: List[Callable], model: str, max_tokens: int) -> str:
     logger.debug(f"Generating program for task: {task_description}")
     tool_docstrings = "\n\n".join([tool.to_docstring() for tool in tools])
@@ -224,7 +228,8 @@ async def generate_core(task: str, model: str, max_tokens: int) -> None:
         make_tool(multiply, "multiply_tool", "Multiplies two numbers and returns the product."),
         make_tool(concat, "concat_tool", "Concatenates two strings."),
         make_tool(agent_tool_wrapper, "agent_tool", "Generates text using a language model."),
-        make_tool(duckduckgo_search, "duckduckgo_tool", "Performs a DuckDuckGo search and returns the abstract text.")
+        make_tool(duckduckgo_search, "duckduckgo_tool", "Performs a DuckDuckGo search and returns the abstract text."),
+        make_tool(display_result, "display_result", "Displays the result in a styled format.")
     ]
 
     # Generate the program
