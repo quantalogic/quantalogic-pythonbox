@@ -175,7 +175,12 @@ class AsyncFunction:
         self.pos_defaults = pos_defaults
         self.kw_defaults = kw_defaults
 
-    async def __call__(self, *args: Any, **kwargs: Any) -> tuple[Any, Dict[str, Any]]:
+    async def __call__(self, *args: Any, _return_locals: bool = False, **kwargs: Any) -> Any:
+        """
+        Execute the async function. If _return_locals is True, return a tuple (result, local_vars).
+        Otherwise, return only the result. This allows nested async calls to return plain values
+        while top-level execution can still capture local variables.
+        """
         new_env_stack: List[Dict[str, Any]] = self.closure[:]
         local_frame: Dict[str, Any] = {}
         local_frame[self.node.name] = self
@@ -223,11 +228,15 @@ class AsyncFunction:
         try:
             for stmt in self.node.body:
                 last_value = await new_interp.visit(stmt, wrap_exceptions=True)
-            # Ensure last_value is returned as-is, allowing f-string to handle numeric values
-            return last_value, {k: v for k, v in local_frame.items() if not k.startswith('__')}
+            if _return_locals:
+                local_vars = {k: v for k, v in local_frame.items() if not k.startswith('__')}
+                return last_value, local_vars
+            return last_value
         except ReturnException as ret:
-            # Pass the return value directly from ReturnException
-            return ret.value, {k: v for k, v in local_frame.items() if not k.startswith('__')}
+            if _return_locals:
+                local_vars = {k: v for k, v in local_frame.items() if not k.startswith('__')}
+                return ret.value, local_vars
+            return ret.value
         finally:
             new_env_stack.pop()
 

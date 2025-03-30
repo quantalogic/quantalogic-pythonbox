@@ -113,13 +113,18 @@ async def execute_async(
                 raise NameError(f"Function '{entry_point}' not found in the code")
             args = args or ()
             kwargs = kwargs or {}
-            if isinstance(func, AsyncFunction) or asyncio.iscoroutinefunction(func):
-                # Expect a tuple (result, local_vars) from AsyncFunction
-                execution_result = await event_loop_manager.run_task(func(*args, **kwargs), timeout=timeout)
+            if isinstance(func, AsyncFunction):
+                # Pass _return_locals=True to get result and local variables
+                execution_result = await event_loop_manager.run_task(
+                    func(*args, **kwargs, _return_locals=True), timeout=timeout
+                )
                 if isinstance(execution_result, tuple) and len(execution_result) == 2:
-                    result, local_vars = execution_result  # Correctly unpack tuple
+                    result, local_vars = execution_result
                 else:
-                    result, local_vars = execution_result, {}  # Fallback for non-tuple results
+                    result, local_vars = execution_result, {}
+            elif asyncio.iscoroutinefunction(func):
+                result = await event_loop_manager.run_task(func(*args, **kwargs), timeout=timeout)
+                local_vars = {}
             elif isinstance(func, Function):
                 result = await func(*args, **kwargs)
                 local_vars = {}  # Non-async functions don't yet support local var return
