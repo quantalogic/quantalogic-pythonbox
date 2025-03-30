@@ -27,10 +27,10 @@ class WrappedException(Exception):
         self.lineno: int = lineno
         self.col: int = col
         self.context_line: str = context_line
-        self.message = original_exception.args[0] if original_exception.args else str(original_exception)
+        self.message = message  # Use the provided message directly for clarity
 
     def __str__(self):
-        return f"Error line {self.lineno}, col {self.col}:\n{self.context_line}\nDescription: {self.message}"
+        return f"Error at line {self.lineno}, col {self.col}:\n{self.context_line}\nDescription: {self.message}"
 
 def has_await(node: ast.AST) -> bool:
     for child in ast.walk(node):

@@ -3,7 +3,7 @@ import asyncio
 from typing import Any, Dict, List, Optional
 
 from .interpreter_core import ASTInterpreter
-from .exceptions import ReturnException, BreakException, ContinueException
+from .exceptions import ReturnException
 
 class GeneratorWrapper:
     def __init__(self, gen):
@@ -223,8 +223,10 @@ class AsyncFunction:
         try:
             for stmt in self.node.body:
                 last_value = await new_interp.visit(stmt, wrap_exceptions=True)
+            # Ensure last_value is returned as-is, allowing f-string to handle numeric values
             return last_value, {k: v for k, v in local_frame.items() if not k.startswith('__')}
         except ReturnException as ret:
+            # Pass the return value directly from ReturnException
             return ret.value, {k: v for k, v in local_frame.items() if not k.startswith('__')}
         finally:
             new_env_stack.pop()

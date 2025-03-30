@@ -117,9 +117,9 @@ async def execute_async(
                 # Expect a tuple (result, local_vars) from AsyncFunction
                 execution_result = await event_loop_manager.run_task(func(*args, **kwargs), timeout=timeout)
                 if isinstance(execution_result, tuple) and len(execution_result) == 2:
-                    result, local_vars = execution_result
+                    result, local_vars = execution_result  # Correctly unpack tuple
                 else:
-                    result, local_vars = execution_result, {}
+                    result, local_vars = execution_result, {}  # Fallback for non-tuple results
             elif isinstance(func, Function):
                 result = await func(*args, **kwargs)
                 local_vars = {}  # Non-async functions don't yet support local var return
