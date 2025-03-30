@@ -60,6 +60,25 @@ class ASTInterpreter:
             'staticmethod': staticmethod,  # Added for test_static_method
             'classmethod': classmethod,  # Added for test_class_method
             '__name__': '__main__',    # Simulate script execution context
+            'round': round,
+            'min': min,
+            'max': max,
+            'abs': abs,
+            'sum': sum,
+            'zip': zip,
+            'map': map,
+            'pow': pow,
+            'divmod': divmod,
+            'all': all,
+            'any': any,
+            'filter': filter,
+            'enumerate': enumerate,
+            'chr': chr,
+            'ord': ord,
+            'hex': hex,
+            'bin': bin,
+            'oct': oct,
+            'isinstance': isinstance,
         }
 
         # Use provided safe_builtins or default
