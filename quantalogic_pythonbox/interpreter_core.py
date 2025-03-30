@@ -1,9 +1,8 @@
 import ast
 import asyncio
-import builtins
 import logging
 import threading
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional
 
 import psutil  # New dependency for resource monitoring
 
@@ -332,19 +331,15 @@ class ASTInterpreter:
         return None
 
     async def _create_class_instance(self, cls: type, *args, **kwargs):
-        if cls in (super, Exception, BaseException) or issubclass(cls, BaseException):
-            instance = cls.__new__(cls, *args, **kwargs)
-            if hasattr(instance, '__init__'):
-                init_method = instance.__init__.__func__ if hasattr(instance.__init__, '__func__') else instance.__init__
-                await self._execute_function(init_method, [instance] + list(args), kwargs)
-            return instance
-        instance = object.__new__(cls)
-        self.current_instance = instance
-        self.current_class = cls
-        init_method = cls.__init__.__func__ if hasattr(cls.__init__, '__func__') else cls.__init__
-        await self._execute_function(init_method, [instance] + list(args), kwargs)
-        self.current_instance = None
-        self.current_class = None
+        # Create the instance using the class's __new__ method
+        instance = cls.__new__(cls, *args, **kwargs)
+        
+        # Check if the instance is of the class type and has an __init__ method
+        if isinstance(instance, cls) and hasattr(cls, '__init__'):
+            init_method = cls.__init__
+            # Call __init__ only if it’s present and relevant
+            await self._execute_function(init_method, [instance] + list(args), kwargs)
+        
         return instance
 
     async def _execute_function(self, func: Any, args: List[Any], kwargs: Dict[str, Any]):

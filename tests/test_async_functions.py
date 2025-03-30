@@ -5,10 +5,10 @@ from quantalogic_pythonbox import execute_async
 async def test_simple_async_function():
     result = await execute_async('''
     async def foo():
-        return 42
+        return 42-9.4
     await foo()
     ''')
-    assert result.result[0] == 42
+    assert result.result[0] == 42-9.4
 
 @pytest.mark.asyncio
 async def test_async_with_timeout():
