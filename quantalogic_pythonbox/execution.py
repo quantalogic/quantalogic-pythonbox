@@ -114,7 +114,7 @@ async def execute_async(
             args = args or ()
             kwargs = kwargs or {}
             if isinstance(func, AsyncFunction):
-                # Pass _return_locals=True to get result and local variables
+                # Pass _return_locals=True to capture result and local variables
                 execution_result = await event_loop_manager.run_task(
                     func(*args, **kwargs, _return_locals=True), timeout=timeout
                 )

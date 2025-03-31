@@ -176,11 +176,8 @@ class AsyncFunction:
         self.kw_defaults = kw_defaults
 
     async def __call__(self, *args: Any, _return_locals: bool = False, **kwargs: Any) -> Any:
-        """
-        Execute the async function. If _return_locals is True, return a tuple (result, local_vars).
-        Otherwise, return only the result. This allows nested async calls to return plain values
-        while top-level execution can still capture local variables.
-        """
+        """Execute the async function. If _return_locals is True, return a tuple (result, local_vars).
+        Otherwise, return only the result. This allows capturing local variables at the top level."""
         new_env_stack: List[Dict[str, Any]] = self.closure[:]
         local_frame: Dict[str, Any] = {}
         local_frame[self.node.name] = self
@@ -238,7 +235,8 @@ class AsyncFunction:
                 return ret.value, local_vars
             return ret.value
         finally:
-            new_env_stack.pop()
+            if not _return_locals:  # Only pop if we don’t need to keep the frame
+                new_env_stack.pop()
 
 class AsyncGeneratorFunction:
     def __init__(self, node: ast.AsyncFunctionDef, closure: List[Dict[str, Any]], interpreter: ASTInterpreter,
