@@ -2,6 +2,15 @@
 requires = ["poetry-core>=1.0.0"]
 build-backend = "poetry.core.masonry.api"
 
+[project]
+name = "quantalogic-pythonbox"
+version = "0.9.0"
+description = "A Python sandbox environment for implementing and testing CodeAct AI Agents."
+authors = [
+  {name = "Raphael Mansuy", email = "raphael.mansuy@quantalogic.app"}
+]
+readme = "README.md"
+license = "Apache-2.0"
 
 [project.urls]
 "Homepage" = "https://github.com/quantalogic/quantalogic-pythonbox"

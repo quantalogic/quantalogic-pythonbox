@@ -22,7 +22,8 @@ class ASTInterpreter:
         max_operations: int = 10000000,   # Added operation limit
         max_memory_mb: int = 1024,        # Added memory limit (1GB default)
         sync_mode: bool = False,          # Added for sync execution optimization
-        safe_builtins: Optional[Dict[str, Any]] = None  # New customizable safe_builtins
+        safe_builtins: Optional[Dict[str, Any]] = None,  # New customizable safe_builtins
+        ignore_typing: bool = False       # New parameter to ignore typing during execution
     ) -> None:
         self.allowed_modules: List[str] = allowed_modules
         self.modules: Dict[str, Any] = {mod: __import__(mod) for mod in allowed_modules}
@@ -34,6 +35,7 @@ class ASTInterpreter:
         self.process = psutil.Process()  # For memory monitoring
         self.type_hints: Dict[str, Any] = {}  # Added for type aliases
         self.special_methods: Dict[str, Callable] = {}  # Added for special method dispatch
+        self.ignore_typing: bool = ignore_typing  # Store the new option
 
         # Default safe_builtins if none provided
         default_safe_builtins: Dict[str, Any] = {
@@ -213,7 +215,8 @@ class ASTInterpreter:
             max_operations=self.max_operations,
             max_memory_mb=self.max_memory_mb,
             sync_mode=self.sync_mode,
-            safe_builtins=self.safe_builtins  # Pass along the customized safe_builtins
+            safe_builtins=self.safe_builtins,  # Pass along the customized safe_builtins
+            ignore_typing=self.ignore_typing   # Pass the ignore_typing option
         )
         new_interp.loop = self.loop
         new_interp.var_cache = self.var_cache.copy()

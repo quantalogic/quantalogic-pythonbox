@@ -80,7 +80,8 @@ async def execute_async(
     timeout: float = 30,
     allowed_modules: List[str] = ['asyncio'],
     namespace: Optional[Dict[str, Any]] = None,
-    max_memory_mb: int = 1024
+    max_memory_mb: int = 1024,
+    ignore_typing: bool = False  # New parameter to ignore typing
 ) -> AsyncExecutionResult:
     start_time = time.time()
     event_loop_manager = ControlledEventLoop()
@@ -98,7 +99,8 @@ async def execute_async(
             restrict_os=True,
             namespace=safe_namespace,
             max_memory_mb=max_memory_mb,
-            source=code  # Pass source code for better error context
+            source=code,  # Pass source code for better error context
+            ignore_typing=ignore_typing  # Pass the new parameter
         )
         interpreter.loop = loop
         
