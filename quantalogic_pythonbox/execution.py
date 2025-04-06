@@ -78,7 +78,12 @@ async def execute_async(
     args: Optional[Tuple] = None,
     kwargs: Optional[Dict[str, Any]] = None,
     timeout: float = 30,
-    allowed_modules: List[str] = ['asyncio'],
+    allowed_modules: List[str] = [
+        'asyncio', 'json', 'math', 'random', 're', 'datetime', 'time',
+        'collections', 'itertools', 'functools', 'operator', 'typing',
+        'decimal', 'fractions', 'statistics', 'array', 'bisect', 'heapq',
+        'copy', 'enum', 'uuid'
+    ],
     namespace: Optional[Dict[str, Any]] = None,
     max_memory_mb: int = 1024,
     ignore_typing: bool = False  # New parameter to ignore typing
