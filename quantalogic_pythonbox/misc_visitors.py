@@ -31,10 +31,11 @@ async def visit_Yield(self: ASTInterpreter, node: ast.Yield, wrap_exceptions: bo
     
     # Check if we're in generator context
     if hasattr(self, 'generator_context') and self.generator_context.get('active', False):
-        # If we're in an active generator context, store the value and signal yield
+        # Store the value and signal yield
         self.generator_context['yield_value'] = value
         self.generator_context['yielded'] = True
-        return value
+        # Return the sent value (None on first yield or if not sent)
+        return self.generator_context.get('sent_value', None)
     
     # Original behavior for direct yield statements
     self.recursion_depth += 1
@@ -48,7 +49,7 @@ async def visit_YieldFrom(self: ASTInterpreter, node: ast.YieldFrom, wrap_except
     
     # Check if we're in generator context
     if hasattr(self, 'generator_context') and self.generator_context.get('active', False):
-        # If we're in an active generator context, store the iterable and signal yield from
+        # Store the iterable and signal yield from
         self.generator_context['yield_from_iterable'] = iterable
         self.generator_context['yield_from'] = True
         return iterable
