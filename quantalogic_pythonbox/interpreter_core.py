@@ -67,6 +67,10 @@ class ASTInterpreter:
             'yield_from_iterable': None
         }
 
+        # Helper to raise exceptions in restricted builtins
+        def raise_(exc):
+            raise exc
+
         # Default safe_builtins if none provided
         default_safe_builtins: Dict[str, Any] = {
             'None': None,
@@ -129,6 +133,9 @@ class ASTInterpreter:
             'complex': complex,        # Complex numbers (safe, pure math)
             'reversed': reversed,      # Reverse iterator (safe)
             'input': lambda x='': "mocked_input",  # Mocked input for safety
+            # Restricted builtins
+            'eval': lambda *args: raise_(ValueError("eval is not allowed")),
+            'exec': lambda *args: raise_(ValueError("exec is not allowed")),
             # Exception Types (for try/except support)
             'BaseException': BaseException,
             'Exception': Exception,
@@ -367,7 +374,11 @@ class ASTInterpreter:
                     await self.assign(elt2, value[len(before) + starred_count + j])
         elif isinstance(target, ast.Attribute):
             obj = await self.visit(target.value, wrap_exceptions=True)
-            setattr(obj, target.attr, value)
+            prop = getattr(type(obj), target.attr, None)
+            if isinstance(prop, property) and prop.fset:
+                prop.fset(obj, value)  # Use property setter if available
+            else:
+                setattr(obj, target.attr, value)
         elif isinstance(target, ast.Subscript):
             obj = await self.visit(target.value, wrap_exceptions=True)
             key = await self.visit(target.slice, wrap_exceptions=True)
@@ -421,6 +432,12 @@ class ASTInterpreter:
             f"Unsupported AST node type: {node.__class__.__name__} at line {lineno}.\nContext: {context_line}"
         )
 
+    async def visit_Module(self, node: ast.Module, wrap_exceptions: bool = True) -> Any:
+        result = None
+        for stmt in node.body:
+            result = await self.visit(stmt, wrap_exceptions=wrap_exceptions)
+        return result
+
     async def execute_async(self, node: ast.Module) -> Any:
         return await self.visit(node)
 
@@ -440,15 +457,10 @@ class ASTInterpreter:
         return None
 
     async def _create_class_instance(self, cls: type, *args, **kwargs):
-        # Create the instance using the class's __new__ method
         instance = cls.__new__(cls, *args, **kwargs)
-        
-        # Check if the instance is of the class type and has an __init__ method
         if isinstance(instance, cls) and hasattr(cls, '__init__'):
             init_method = cls.__init__
-            # Call __init__ only if it's present and relevant
             await self._execute_function(init_method, [instance] + list(args), kwargs)
-        
         return instance
 
     async def _execute_function(self, func: Any, args: List[Any], kwargs: Dict[str, Any]):
@@ -460,3 +472,29 @@ class ASTInterpreter:
                 return await result
             return result
         raise TypeError(f"Object {func} is not callable")
+
+
+class AsyncFunction:
+    async def __call__(self, *args: Any, _return_locals: bool = False, **kwargs: Any) -> Any:
+        # Placeholder to match the updated class in function_utils.py
+        pass
+
+
+class AsyncExecutionResult:
+    def __init__(self, result: Any, error: Optional[str], execution_time: float, local_variables: Optional[Dict[str, Any]]):
+        self.result = result
+        self.error = error
+        self.execution_time = execution_time
+        self.local_variables = local_variables
+
+
+class EventLoopManager:
+    def __init__(self):
+        self.loop = asyncio.get_event_loop()
+
+    async def run_task(self, coro, timeout=None):
+        return await asyncio.wait_for(coro, timeout=timeout)
+
+
+event_loop_manager = EventLoopManager()
+timeout = 60  # Define timeout globally or configure as needed

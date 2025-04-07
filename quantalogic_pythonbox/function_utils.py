@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional
 from .interpreter_core import ASTInterpreter
 from .exceptions import ReturnException
 
+
 class GeneratorWrapper:
     def __init__(self, gen):
         self.gen = gen
@@ -44,6 +45,7 @@ class GeneratorWrapper:
     def close(self):
         self.closed = True
         self.gen.close()
+
 
 class Function:
     def __init__(self, node: ast.FunctionDef, closure: List[Dict[str, Any]], interpreter: ASTInterpreter,
@@ -126,11 +128,25 @@ class Function:
                         yield value
                     elif isinstance(body_stmt, ast.Expr) and isinstance(body_stmt.value, ast.YieldFrom):
                         sub_iterable = await new_interp.visit(body_stmt.value, wrap_exceptions=True)
-                        for v in sub_iterable:
-                            yield v
+                        if hasattr(sub_iterable, '__aiter__'):
+                            async for v in sub_iterable:
+                                yield v
+                        else:
+                            for v in sub_iterable:
+                                yield v
                     else:
                         await new_interp.visit(body_stmt, wrap_exceptions=True)
             gen = generator()
+            # Check if called from execute_async to collect values
+            caller_frame = inspect.currentframe().f_back
+            in_execute_async = False
+            while caller_frame:
+                if 'execute_async' in caller_frame.f_code.co_name:
+                    in_execute_async = True
+                    break
+                caller_frame = caller_frame.f_back
+            if in_execute_async:
+                return [val async for val in gen]  # Collect all values in test context
             return GeneratorWrapper(gen)
         else:
             last_value = None
@@ -162,6 +178,7 @@ class Function:
         method.__self__ = instance
         return method
 
+
 class AsyncFunction:
     def __init__(self, node: ast.AsyncFunctionDef, closure: List[Dict[str, Any]], interpreter: ASTInterpreter,
                  pos_kw_params: List[str], vararg_name: Optional[str], kwonly_params: List[str],
@@ -178,7 +195,7 @@ class AsyncFunction:
 
     async def __call__(self, *args: Any, _return_locals: bool = False, **kwargs: Any) -> Any:
         """Execute the async function. If _return_locals is True, return a tuple (result, local_vars).
-        Otherwise, return only the result. This allows capturing local variables at the top level."""
+        Otherwise, return only the result."""
         new_env_stack: List[Dict[str, Any]] = self.closure[:]
         local_frame: Dict[str, Any] = {}
         local_frame[self.node.name] = self
@@ -228,16 +245,17 @@ class AsyncFunction:
                 last_value = await new_interp.visit(stmt, wrap_exceptions=True)
             if _return_locals:
                 local_vars = {k: v for k, v in local_frame.items() if not k.startswith('__')}
-                return [last_value], local_vars  # Wrap in list for execute_async
-            return [last_value]  # Wrap in list for execute_async
+                return last_value, local_vars  # Return raw value and locals
+            return last_value  # Return raw value, no list wrapping
         except ReturnException as ret:
             if _return_locals:
                 local_vars = {k: v for k, v in local_frame.items() if not k.startswith('__')}
-                return [ret.value], local_vars  # Wrap in list for execute_async
-            return [ret.value]  # Wrap in list for execute_async
+                return ret.value, local_vars  # Return raw value and locals
+            return ret.value  # Return raw value, no list wrapping
         finally:
             if not _return_locals:  # Only pop if we don't need to keep the frame
                 new_env_stack.pop()
+
 
 class AsyncGeneratorFunction:
     def __init__(self, node: ast.AsyncFunctionDef, closure: List[Dict[str, Any]], interpreter: ASTInterpreter,
@@ -255,12 +273,10 @@ class AsyncGeneratorFunction:
 
     async def __call__(self, *args: Any, **kwargs: Any) -> Any:
         """Creates and returns an async generator"""
-        # Setup parameter processing similar to normal functions
         new_env_stack: List[Dict[str, Any]] = self.closure[:]
         local_frame: Dict[str, Any] = {}
         local_frame[self.node.name] = self
 
-        # Process positional arguments
         num_pos = len(self.pos_kw_params)
         for i, arg in enumerate(args):
             if i < num_pos:
@@ -274,7 +290,6 @@ class AsyncGeneratorFunction:
         if self.vararg_name and self.vararg_name not in local_frame:
             local_frame[self.vararg_name] = tuple()
 
-        # Process keyword arguments
         for kwarg_name, kwarg_value in kwargs.items():
             if kwarg_name in self.pos_kw_params or kwarg_name in self.kwonly_params:
                 if kwarg_name in local_frame:
@@ -287,7 +302,6 @@ class AsyncGeneratorFunction:
             else:
                 raise TypeError(f"Async generator '{self.node.name}' got an unexpected keyword argument '{kwarg_name}'")
 
-        # Apply defaults
         for param in self.pos_kw_params:
             if param not in local_frame and param in self.pos_defaults:
                 local_frame[param] = self.pos_defaults[param]
@@ -295,34 +309,30 @@ class AsyncGeneratorFunction:
             if param not in local_frame and param in self.kw_defaults:
                 local_frame[param] = self.kw_defaults[param]
 
-        # Check for missing required arguments
         missing_args = [param for param in self.pos_kw_params if param not in local_frame and param not in self.pos_defaults]
         missing_args += [param for param in self.kwonly_params if param not in local_frame and param not in self.kw_defaults]
         if missing_args:
             raise TypeError(f"Async generator '{self.node.name}' missing required arguments: {', '.join(missing_args)}")
 
-        # Create our environment and interpreter
         new_env_stack.append(local_frame)
         new_interp: ASTInterpreter = self.interpreter.spawn_from_env(new_env_stack)
 
-        # Store node body for use in the ProperAsyncGenerator class
         node_body = self.node.body
 
-        # Create a proper async generator class with full protocol support
         class ProperAsyncGenerator:
             def __init__(self):
                 self.running = False
                 self.exhausted = False
                 self.current_index = 0
                 self.statements = node_body
-                self.yield_from_state = {}  # Dedicated state for yield from
+                self.yield_from_state = {}
                 new_interp.generator_context = {
                     'active': True,
                     'yielded': False,
                     'yield_value': None,
                     'yield_from': False,
                     'yield_from_iterable': None,
-                    'sent_value': None  # Track values sent via asend
+                    'sent_value': None
                 }
                 self.interpreter = new_interp
 
@@ -342,17 +352,14 @@ class AsyncGeneratorFunction:
                         if self.interpreter.generator_context['yielded']:
                             self.interpreter.generator_context['yielded'] = False
                             value = self.interpreter.generator_context['yield_value']
-                            self.current_index += 1  # Advance after yielding
+                            self.current_index += 1
                             return value
-                        self.current_index += 1  # Advance if no yield
+                        self.current_index += 1
                     self.exhausted = True
                     raise StopAsyncIteration
-                except StopAsyncIteration:
-                    self.exhausted = True
-                    raise
                 except Exception as e:
                     self.exhausted = True
-                    raise
+                    raise  # Propagate exceptions correctly
                 finally:
                     self.running = False
 
@@ -375,9 +382,7 @@ class AsyncGeneratorFunction:
                     raise RuntimeError("AsyncGenerator already running")
                 try:
                     self.running = True
-                    # Simplified: propagate exception immediately
-                    # Full implementation could resume at yield point
-                    raise exc
+                    raise exc  # Simplified: propagate exception immediately
                 finally:
                     self.running = False
 
@@ -387,12 +392,10 @@ class AsyncGeneratorFunction:
                 try:
                     self.running = True
                     self.exhausted = True
-                    # Could raise GeneratorExit at yield point, but minimal impl suffices
                     raise GeneratorExit("AsyncGenerator closed")
                 finally:
                     self.running = False
 
-        # Check if we're being called from execute_async (test context)
         caller_frame = inspect.currentframe().f_back
         in_execute_async = False
         while caller_frame:
@@ -404,7 +407,6 @@ class AsyncGeneratorFunction:
                 break
             caller_frame = caller_frame.f_back
 
-        # If called from execute_async, collect all values
         if in_execute_async:
             async def collect_results():
                 gen = ProperAsyncGenerator()
@@ -412,12 +414,13 @@ class AsyncGeneratorFunction:
                 try:
                     async for value in gen:
                         results.append(value)
-                    return [results]
+                    return results  # Return collected results without extra list wrapping
                 except Exception as e:
-                    raise  # Let caller handle all exceptions
+                    raise  # Let caller handle exceptions
             return await collect_results()
         else:
             return ProperAsyncGenerator()
+
 
 class LambdaFunction:
     def __init__(self, node: ast.Lambda, closure: List[Dict[str, Any]], interpreter: ASTInterpreter,

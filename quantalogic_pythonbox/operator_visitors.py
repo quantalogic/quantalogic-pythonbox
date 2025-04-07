@@ -3,6 +3,7 @@ from typing import Any
 
 from .interpreter_core import ASTInterpreter
 
+
 async def visit_BinOp(self: ASTInterpreter, node: ast.BinOp, wrap_exceptions: bool = True) -> Any:
     left: Any = await self.visit(node.left, wrap_exceptions=wrap_exceptions)
     right: Any = await self.visit(node.right, wrap_exceptions=wrap_exceptions)
@@ -37,8 +38,11 @@ async def visit_BinOp(self: ASTInterpreter, node: ast.BinOp, wrap_exceptions: bo
         if isinstance(left, set) and isinstance(right, set):
             return left & right
         return left & right
+    elif isinstance(op, ast.MatMult):  # Added support for matrix multiplication
+        return left @ right
     else:
         raise Exception("Unsupported binary operator: " + str(op))
+
 
 async def visit_UnaryOp(self: ASTInterpreter, node: ast.UnaryOp, wrap_exceptions: bool = True) -> Any:
     operand: Any = await self.visit(node.operand, wrap_exceptions=wrap_exceptions)
@@ -53,6 +57,7 @@ async def visit_UnaryOp(self: ASTInterpreter, node: ast.UnaryOp, wrap_exceptions
         return ~operand
     else:
         raise Exception("Unsupported unary operator: " + str(op))
+
 
 async def visit_Compare(self: ASTInterpreter, node: ast.Compare, wrap_exceptions: bool = True) -> bool:
     left: Any = await self.visit(node.left, wrap_exceptions=wrap_exceptions)
@@ -92,6 +97,7 @@ async def visit_Compare(self: ASTInterpreter, node: ast.Compare, wrap_exceptions
             raise Exception("Unsupported comparison operator: " + str(op))
         left = right
     return True
+
 
 async def visit_BoolOp(self: ASTInterpreter, node: ast.BoolOp, wrap_exceptions: bool = True) -> bool:
     if isinstance(node.op, ast.And):

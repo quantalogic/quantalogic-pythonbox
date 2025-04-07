@@ -4,6 +4,7 @@ from typing import Any, Optional, Tuple
 from .exceptions import BaseExceptionGroup, ReturnException, WrappedException
 from .interpreter_core import ASTInterpreter
 
+
 async def visit_Try(self: ASTInterpreter, node: ast.Try, wrap_exceptions: bool = True) -> Any:
     result: Any = None
     try:
@@ -36,6 +37,7 @@ async def visit_Try(self: ASTInterpreter, node: ast.Try, wrap_exceptions: bool =
         for stmt in node.finalbody:
             await self.visit(stmt, wrap_exceptions=True)
     return result
+
 
 async def visit_TryStar(self: ASTInterpreter, node: ast.TryStar, wrap_exceptions: bool = True) -> Any:
     result: Any = None
@@ -102,8 +104,11 @@ async def visit_TryStar(self: ASTInterpreter, node: ast.TryStar, wrap_exceptions
 
     return result
 
+
 async def visit_Raise(self: ASTInterpreter, node: ast.Raise, wrap_exceptions: bool = True) -> None:
     exc = await self.visit(node.exc, wrap_exceptions=wrap_exceptions) if node.exc else None
     if exc:
-        raise exc
+        if isinstance(exc, WrappedException) and hasattr(exc, 'original_exception'):
+            raise exc.original_exception  # Raise the original exception if wrapped
+        raise exc  # Preserve and raise the original exception
     raise Exception("Raise with no exception specified")
