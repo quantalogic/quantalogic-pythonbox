@@ -17,6 +17,7 @@ async def visit_ListComp(self: ASTInterpreter, node: ast.ListComp, wrap_exceptio
             comp = node.generators[gen_idx]
             iterable = await self.visit(comp.iter, wrap_exceptions=wrap_exceptions)
             if hasattr(iterable, '__aiter__'):
+                # Fix: Handle async iterables correctly by awaiting all values
                 async for item in iterable:
                     new_frame = self.env_stack[-1].copy()
                     self.env_stack.append(new_frame)

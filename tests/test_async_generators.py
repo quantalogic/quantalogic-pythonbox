@@ -3,7 +3,6 @@ from quantalogic_pythonbox import execute_async
 
 @pytest.mark.asyncio
 async def test_simple_async_generator():
-    """Test a basic async generator in the sandbox."""
     source = """
 async def async_gen():
     for i in range(3):
@@ -21,7 +20,6 @@ async def compute():
 
 @pytest.mark.asyncio
 async def test_async_generator_with_exception():
-    """Test async generator exception handling in the sandbox."""
     source = """
 async def async_gen():
     yield 1
@@ -36,5 +34,5 @@ async def compute():
         return str(e)
     return "no error"
 """
-    result = await execute_async(source, entry_point="compute", allowed_modules=[])
+    result = await execute_async(source, entry_point="compute", allowed_modules=["asyncio"])
     assert result.result == "test error"

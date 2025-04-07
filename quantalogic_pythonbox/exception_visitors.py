@@ -13,6 +13,7 @@ async def visit_Try(self: ASTInterpreter, node: ast.Try, wrap_exceptions: bool =
     except ReturnException as ret:
         raise ret
     except Exception as e:
+        self.current_exception = e  # Fix: Store the current exception
         original_e = e.original_exception if isinstance(e, WrappedException) else e
         for handler in node.handlers:
             exc_type = await self._resolve_exception_type(handler.type)
@@ -48,6 +49,7 @@ async def visit_TryStar(self: ASTInterpreter, node: ast.TryStar, wrap_exceptions
             result = await self.visit(stmt, wrap_exceptions=False)
     except BaseException as e:
         exc_info = (type(e), e, e.__traceback__)
+        self.current_exception = e  # Fix: Store the current exception
         handled = False
         if isinstance(e, BaseExceptionGroup):
             remaining_exceptions = []
@@ -107,8 +109,11 @@ async def visit_TryStar(self: ASTInterpreter, node: ast.TryStar, wrap_exceptions
 
 async def visit_Raise(self: ASTInterpreter, node: ast.Raise, wrap_exceptions: bool = True) -> None:
     exc = await self.visit(node.exc, wrap_exceptions=wrap_exceptions) if node.exc else None
+    # Fix: Re-raise the current exception if no new exception is specified
     if exc:
         if isinstance(exc, WrappedException) and hasattr(exc, 'original_exception'):
-            raise exc.original_exception  # Raise the original exception if wrapped
-        raise exc  # Preserve and raise the original exception
+            raise exc.original_exception
+        raise exc
+    elif self.current_exception:
+        raise self.current_exception
     raise Exception("Raise with no exception specified")

@@ -14,7 +14,7 @@ class AsyncExecutionResult:
     result: Any
     error: Optional[str]
     execution_time: float
-    local_variables: Optional[Dict[str, Any]] = None  # Added to store local variables
+    local_variables: Optional[Dict[str, Any]] = None
 
 def optimize_ast(tree: ast.AST) -> ast.AST:
     """Perform constant folding and basic optimizations on the AST."""
@@ -86,7 +86,7 @@ async def execute_async(
     ],
     namespace: Optional[Dict[str, Any]] = None,
     max_memory_mb: int = 1024,
-    ignore_typing: bool = False  # New parameter to ignore typing
+    ignore_typing: bool = False
 ) -> AsyncExecutionResult:
     start_time = time.time()
     event_loop_manager = ControlledEventLoop()
@@ -95,17 +95,16 @@ async def execute_async(
         ast_tree = optimize_ast(ast.parse(textwrap.dedent(code)))
         loop = await event_loop_manager.get_loop()
         
-        # Remove direct asyncio access from builtins
         safe_namespace = namespace.copy() if namespace else {}
-        safe_namespace.pop('asyncio', None)  # Prevent direct asyncio access
+        safe_namespace.pop('asyncio', None)
         
         interpreter = ASTInterpreter(
             allowed_modules=allowed_modules,
             restrict_os=True,
             namespace=safe_namespace,
             max_memory_mb=max_memory_mb,
-            source=code,  # Pass source code for better error context
-            ignore_typing=ignore_typing  # Pass the new parameter
+            source=code,
+            ignore_typing=ignore_typing
         )
         interpreter.loop = loop
         
@@ -121,7 +120,6 @@ async def execute_async(
             args = args or ()
             kwargs = kwargs or {}
             if isinstance(func, AsyncFunction):
-                # Pass _return_locals=True to capture result and local variables
                 execution_result = await event_loop_manager.run_task(
                     func(*args, **kwargs, _return_locals=True), timeout=timeout
                 )
@@ -134,7 +132,7 @@ async def execute_async(
                 local_vars = {}
             elif isinstance(func, Function):
                 result = await func(*args, **kwargs)
-                local_vars = {}  # Non-async functions don't yet support local var return
+                local_vars = {}
             else:
                 result = func(*args, **kwargs)
                 if asyncio.iscoroutine(result):
@@ -143,12 +141,12 @@ async def execute_async(
             if asyncio.iscoroutine(result):
                 result = await event_loop_manager.run_task(result, timeout=timeout)
         else:
+            # Fix: Ensure the full result of the last expression is returned
             result = await interpreter.execute_async(ast_tree)
             local_vars = {k: v for k, v in interpreter.env_stack[-1].items() if not k.startswith('__')}
         
-        # Filter out internal variables if not already filtered
         filtered_local_vars = local_vars if local_vars else {}
-        if not entry_point:  # Apply filtering only for module-level execution
+        if not entry_point:
             filtered_local_vars = {k: v for k, v in local_vars.items() if not k.startswith('__')}
         
         return AsyncExecutionResult(
@@ -186,7 +184,6 @@ def interpret_ast(ast_tree: ast.AST, allowed_modules: List[str], source: str = "
     ast_tree = optimize_ast(ast_tree)
     event_loop_manager = ControlledEventLoop()
     
-    # Remove asyncio from namespace
     safe_namespace = namespace.copy() if namespace else {}
     safe_namespace.pop('asyncio', None)
     

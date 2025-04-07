@@ -25,8 +25,13 @@ async def visit_ImportFrom(self: ASTInterpreter, node: ast.ImportFrom, wrap_exce
             f"Import Error: Module '{node.module}' is not allowed. Only {self.allowed_modules} are permitted."
         )
     for alias in node.names:
+        # Fix: Support star imports for allowed modules
         if alias.name == "*":
-            raise Exception("Import Error: 'from ... import *' is not supported.")
-        asname = alias.asname if alias.asname else alias.name
-        attr = getattr(self.modules[node.module], alias.name)
-        self.set_variable(asname, attr)
+            module = self.modules[node.module]
+            for name in dir(module):
+                if not name.startswith("_"):  # Exclude private attributes
+                    self.set_variable(name, getattr(module, name))
+        else:
+            asname = alias.asname if alias.asname else alias.name
+            attr = getattr(self.modules[node.module], alias.name)
+            self.set_variable(asname, attr)

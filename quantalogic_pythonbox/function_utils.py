@@ -54,6 +54,8 @@ class Function:
         self.node: ast.FunctionDef = node
         self.closure: List[Dict[str, Any]] = closure[:]
         self.interpreter: ASTInterpreter = interpreter
+        # Fix: Support positional-only parameters
+        self.posonly_params = [arg.arg for arg in node.args.posonlyargs] if hasattr(node.args, 'posonlyargs') else []
         self.pos_kw_params = pos_kw_params
         self.vararg_name = vararg_name
         self.kwonly_params = kwonly_params
@@ -62,28 +64,38 @@ class Function:
         self.kw_defaults = kw_defaults
         self.defining_class = None
         self.is_generator = any(isinstance(n, (ast.Yield, ast.YieldFrom)) for n in ast.walk(node))
-        self.generator_state = None  # Added for generator protocol
 
     async def __call__(self, *args: Any, **kwargs: Any) -> Any:
         new_env_stack: List[Dict[str, Any]] = self.closure[:]
         local_frame: Dict[str, Any] = {}
         local_frame[self.node.name] = self
 
-        num_pos = len(self.pos_kw_params)
+        # Fix: Handle positional-only parameters
+        num_posonly = len(self.posonly_params)
+        num_pos_kw = len(self.pos_kw_params)
+        total_pos = num_posonly + num_pos_kw
+        pos_args_used = 0
+
         for i, arg in enumerate(args):
-            if i < num_pos:
-                local_frame[self.pos_kw_params[i]] = arg
+            if i < num_posonly:
+                local_frame[self.posonly_params[i]] = arg
+                pos_args_used += 1
+            elif i < total_pos:
+                local_frame[self.pos_kw_params[i - num_posonly]] = arg
+                pos_args_used += 1
             elif self.vararg_name:
                 if self.vararg_name not in local_frame:
                     local_frame[self.vararg_name] = []
                 local_frame[self.vararg_name].append(arg)
             else:
-                raise TypeError(f"Function '{self.node.name}' takes {num_pos} positional arguments but {len(args)} were given")
+                raise TypeError(f"Function '{self.node.name}' takes {total_pos} positional arguments but {len(args)} were given")
         if self.vararg_name and self.vararg_name not in local_frame:
             local_frame[self.vararg_name] = tuple()
 
         for kwarg_name, kwarg_value in kwargs.items():
-            if kwarg_name in self.pos_kw_params or kwarg_name in self.kwonly_params:
+            if kwarg_name in self.posonly_params:
+                raise TypeError(f"Function '{self.node.name}' got an unexpected keyword argument '{kwarg_name}' (positional-only)")
+            elif kwarg_name in self.pos_kw_params or kwarg_name in self.kwonly_params:
                 if kwarg_name in local_frame:
                     raise TypeError(f"Function '{self.node.name}' got multiple values for argument '{kwarg_name}'")
                 local_frame[kwarg_name] = kwarg_value
@@ -104,7 +116,8 @@ class Function:
         if self.kwarg_name and self.kwarg_name in local_frame:
             local_frame[self.kwarg_name] = dict(local_frame[self.kwarg_name])
 
-        missing_args = [param for param in self.pos_kw_params if param not in local_frame and param not in self.pos_defaults]
+        missing_args = [param for param in self.posonly_params if param not in local_frame]
+        missing_args += [param for param in self.pos_kw_params if param not in local_frame and param not in self.pos_defaults]
         missing_args += [param for param in self.kwonly_params if param not in local_frame and param not in self.kw_defaults]
         if missing_args:
             raise TypeError(f"Function '{self.node.name}' missing required arguments: {', '.join(missing_args)}")
@@ -121,6 +134,7 @@ class Function:
             new_interp.current_instance = args[0]
 
         if self.is_generator:
+            # Fix: Return a generator object that yields values correctly
             async def generator():
                 for body_stmt in self.node.body:
                     if isinstance(body_stmt, ast.Expr) and isinstance(body_stmt.value, ast.Yield):
@@ -134,10 +148,12 @@ class Function:
                         else:
                             for v in sub_iterable:
                                 yield v
+                    elif isinstance(body_stmt, ast.Return):
+                        value = await new_interp.visit(body_stmt.value, wrap_exceptions=True) if body_stmt.value else None
+                        raise StopIteration(value)
                     else:
                         await new_interp.visit(body_stmt, wrap_exceptions=True)
             gen = generator()
-            # Check if called from execute_async to collect values
             caller_frame = inspect.currentframe().f_back
             in_execute_async = False
             while caller_frame:
@@ -186,6 +202,8 @@ class AsyncFunction:
         self.node: ast.AsyncFunctionDef = node
         self.closure: List[Dict[str, Any]] = closure[:]
         self.interpreter: ASTInterpreter = interpreter
+        # Fix: Support positional-only parameters
+        self.posonly_params = [arg.arg for arg in node.args.posonlyargs] if hasattr(node.args, 'posonlyargs') else []
         self.pos_kw_params = pos_kw_params
         self.vararg_name = vararg_name
         self.kwonly_params = kwonly_params
@@ -194,27 +212,35 @@ class AsyncFunction:
         self.kw_defaults = kw_defaults
 
     async def __call__(self, *args: Any, _return_locals: bool = False, **kwargs: Any) -> Any:
-        """Execute the async function. If _return_locals is True, return a tuple (result, local_vars).
-        Otherwise, return only the result."""
         new_env_stack: List[Dict[str, Any]] = self.closure[:]
         local_frame: Dict[str, Any] = {}
         local_frame[self.node.name] = self
 
-        num_pos = len(self.pos_kw_params)
+        num_posonly = len(self.posonly_params)
+        num_pos_kw = len(self.pos_kw_params)
+        total_pos = num_posonly + num_pos_kw
+        pos_args_used = 0
+
         for i, arg in enumerate(args):
-            if i < num_pos:
-                local_frame[self.pos_kw_params[i]] = arg
+            if i < num_posonly:
+                local_frame[self.posonly_params[i]] = arg
+                pos_args_used += 1
+            elif i < total_pos:
+                local_frame[self.pos_kw_params[i - num_posonly]] = arg
+                pos_args_used += 1
             elif self.vararg_name:
                 if self.vararg_name not in local_frame:
                     local_frame[self.vararg_name] = []
                 local_frame[self.vararg_name].append(arg)
             else:
-                raise TypeError(f"Async function '{self.node.name}' takes {num_pos} positional arguments but {len(args)} were given")
+                raise TypeError(f"Async function '{self.node.name}' takes {total_pos} positional arguments but {len(args)} were given")
         if self.vararg_name and self.vararg_name not in local_frame:
             local_frame[self.vararg_name] = tuple()
 
         for kwarg_name, kwarg_value in kwargs.items():
-            if kwarg_name in self.pos_kw_params or kwarg_name in self.kwonly_params:
+            if kwarg_name in self.posonly_params:
+                raise TypeError(f"Async function '{self.node.name}' got an unexpected keyword argument '{kwarg_name}' (positional-only)")
+            elif kwarg_name in self.pos_kw_params or kwarg_name in self.kwonly_params:
                 if kwarg_name in local_frame:
                     raise TypeError(f"Async function '{self.node.name}' got multiple values for argument '{kwarg_name}'")
                 local_frame[kwarg_name] = kwarg_value
@@ -232,7 +258,8 @@ class AsyncFunction:
             if param not in local_frame and param in self.kw_defaults:
                 local_frame[param] = self.kw_defaults[param]
 
-        missing_args = [param for param in self.pos_kw_params if param not in local_frame and param not in self.pos_defaults]
+        missing_args = [param for param in self.posonly_params if param not in local_frame]
+        missing_args += [param for param in self.pos_kw_params if param not in local_frame and param not in self.pos_defaults]
         missing_args += [param for param in self.kwonly_params if param not in local_frame and param not in self.kw_defaults]
         if missing_args:
             raise TypeError(f"Async function '{self.node.name}' missing required arguments: {', '.join(missing_args)}")
@@ -245,15 +272,15 @@ class AsyncFunction:
                 last_value = await new_interp.visit(stmt, wrap_exceptions=True)
             if _return_locals:
                 local_vars = {k: v for k, v in local_frame.items() if not k.startswith('__')}
-                return last_value, local_vars  # Return raw value and locals
-            return last_value  # Return raw value, no list wrapping
+                return last_value, local_vars
+            return last_value
         except ReturnException as ret:
             if _return_locals:
                 local_vars = {k: v for k, v in local_frame.items() if not k.startswith('__')}
-                return ret.value, local_vars  # Return raw value and locals
-            return ret.value  # Return raw value, no list wrapping
+                return ret.value, local_vars
+            return ret.value
         finally:
-            if not _return_locals:  # Only pop if we don't need to keep the frame
+            if not _return_locals:
                 new_env_stack.pop()
 
 
@@ -264,6 +291,8 @@ class AsyncGeneratorFunction:
         self.node: ast.AsyncFunctionDef = node
         self.closure: List[Dict[str, Any]] = closure[:]
         self.interpreter: ASTInterpreter = interpreter
+        # Fix: Support positional-only parameters
+        self.posonly_params = [arg.arg for arg in node.args.posonlyargs] if hasattr(node.args, 'posonlyargs') else []
         self.pos_kw_params = pos_kw_params
         self.vararg_name = vararg_name
         self.kwonly_params = kwonly_params
@@ -272,26 +301,35 @@ class AsyncGeneratorFunction:
         self.kw_defaults = kw_defaults
 
     async def __call__(self, *args: Any, **kwargs: Any) -> Any:
-        """Creates and returns an async generator"""
         new_env_stack: List[Dict[str, Any]] = self.closure[:]
         local_frame: Dict[str, Any] = {}
         local_frame[self.node.name] = self
 
-        num_pos = len(self.pos_kw_params)
+        num_posonly = len(self.posonly_params)
+        num_pos_kw = len(self.pos_kw_params)
+        total_pos = num_posonly + num_pos_kw
+        pos_args_used = 0
+
         for i, arg in enumerate(args):
-            if i < num_pos:
-                local_frame[self.pos_kw_params[i]] = arg
+            if i < num_posonly:
+                local_frame[self.posonly_params[i]] = arg
+                pos_args_used += 1
+            elif i < total_pos:
+                local_frame[self.pos_kw_params[i - num_posonly]] = arg
+                pos_args_used += 1
             elif self.vararg_name:
                 if self.vararg_name not in local_frame:
                     local_frame[self.vararg_name] = []
                 local_frame[self.vararg_name].append(arg)
             else:
-                raise TypeError(f"Async generator '{self.node.name}' takes {num_pos} positional arguments but {len(args)} were given")
+                raise TypeError(f"Async generator '{self.node.name}' takes {total_pos} positional arguments but {len(args)} were given")
         if self.vararg_name and self.vararg_name not in local_frame:
             local_frame[self.vararg_name] = tuple()
 
         for kwarg_name, kwarg_value in kwargs.items():
-            if kwarg_name in self.pos_kw_params or kwarg_name in self.kwonly_params:
+            if kwarg_name in self.posonly_params:
+                raise TypeError(f"Async generator '{self.node.name}' got an unexpected keyword argument '{kwarg_name}' (positional-only)")
+            elif kwarg_name in self.pos_kw_params or kwarg_name in self.kwonly_params:
                 if kwarg_name in local_frame:
                     raise TypeError(f"Async generator '{self.node.name}' got multiple values for argument '{kwarg_name}'")
                 local_frame[kwarg_name] = kwarg_value
@@ -309,7 +347,8 @@ class AsyncGeneratorFunction:
             if param not in local_frame and param in self.kw_defaults:
                 local_frame[param] = self.kw_defaults[param]
 
-        missing_args = [param for param in self.pos_kw_params if param not in local_frame and param not in self.pos_defaults]
+        missing_args = [param for param in self.posonly_params if param not in local_frame]
+        missing_args += [param for param in self.pos_kw_params if param not in local_frame and param not in self.pos_defaults]
         missing_args += [param for param in self.kwonly_params if param not in local_frame and param not in self.kw_defaults]
         if missing_args:
             raise TypeError(f"Async generator '{self.node.name}' missing required arguments: {', '.join(missing_args)}")
@@ -348,6 +387,10 @@ class AsyncGeneratorFunction:
                     self.running = True
                     while self.current_index < len(self.statements):
                         stmt = self.statements[self.current_index]
+                        # Fix: Properly handle raises in async generators
+                        if isinstance(stmt, ast.Raise):
+                            exc = await self.interpreter.visit(stmt, wrap_exceptions=True)
+                            raise exc
                         await self.interpreter.visit(stmt, wrap_exceptions=True)
                         if self.interpreter.generator_context['yielded']:
                             self.interpreter.generator_context['yielded'] = False
@@ -359,7 +402,7 @@ class AsyncGeneratorFunction:
                     raise StopAsyncIteration
                 except Exception as e:
                     self.exhausted = True
-                    raise  # Propagate exceptions correctly
+                    raise
                 finally:
                     self.running = False
 
@@ -382,7 +425,7 @@ class AsyncGeneratorFunction:
                     raise RuntimeError("AsyncGenerator already running")
                 try:
                     self.running = True
-                    raise exc  # Simplified: propagate exception immediately
+                    raise exc
                 finally:
                     self.running = False
 
@@ -407,6 +450,7 @@ class AsyncGeneratorFunction:
                 break
             caller_frame = caller_frame.f_back
 
+        # Fix: Return the async generator object unless collecting results
         if in_execute_async:
             async def collect_results():
                 gen = ProperAsyncGenerator()
@@ -414,9 +458,9 @@ class AsyncGeneratorFunction:
                 try:
                     async for value in gen:
                         results.append(value)
-                    return results  # Return collected results without extra list wrapping
+                    return results
                 except Exception as e:
-                    raise  # Let caller handle exceptions
+                    raise
             return await collect_results()
         else:
             return ProperAsyncGenerator()
