@@ -30,7 +30,8 @@ class WrappedException(Exception):
         self.message = message  # Use the provided message directly for clarity
 
     def __str__(self):
-        return f"Error at line {self.lineno}, col {self.col}:\n{self.context_line}\nDescription: {self.message}"
+        exc_type = type(self.original_exception).__name__
+        return f"{exc_type} at line {self.lineno}, col {self.col}:\n{self.context_line}\nDescription: {self.message}"
 
 def has_await(node: ast.AST) -> bool:
     for child in ast.walk(node):

@@ -134,36 +134,26 @@ class Function:
             new_interp.current_instance = args[0]
 
         if self.is_generator:
-            # Fix: Return a generator object that yields values correctly
-            async def generator():
+            # Updated: Return a proper synchronous generator for sync functions
+            def generator():
                 for body_stmt in self.node.body:
                     if isinstance(body_stmt, ast.Expr) and isinstance(body_stmt.value, ast.Yield):
-                        value = await new_interp.visit(body_stmt.value, wrap_exceptions=True)
+                        # Use asyncio.run to handle any awaits in the yield value
+                        value = asyncio.run(new_interp.visit(body_stmt.value, wrap_exceptions=True))
                         yield value
                     elif isinstance(body_stmt, ast.Expr) and isinstance(body_stmt.value, ast.YieldFrom):
-                        sub_iterable = await new_interp.visit(body_stmt.value, wrap_exceptions=True)
+                        sub_iterable = asyncio.run(new_interp.visit(body_stmt.value, wrap_exceptions=True))
                         if hasattr(sub_iterable, '__aiter__'):
-                            async for v in sub_iterable:
-                                yield v
+                            raise TypeError("cannot 'yield from' an asynchronous iterable in a synchronous generator")
                         else:
                             for v in sub_iterable:
                                 yield v
                     elif isinstance(body_stmt, ast.Return):
-                        value = await new_interp.visit(body_stmt.value, wrap_exceptions=True) if body_stmt.value else None
+                        value = asyncio.run(new_interp.visit(body_stmt.value, wrap_exceptions=True)) if body_stmt.value else None
                         raise StopIteration(value)
                     else:
-                        await new_interp.visit(body_stmt, wrap_exceptions=True)
-            gen = generator()
-            caller_frame = inspect.currentframe().f_back
-            in_execute_async = False
-            while caller_frame:
-                if 'execute_async' in caller_frame.f_code.co_name:
-                    in_execute_async = True
-                    break
-                caller_frame = caller_frame.f_back
-            if in_execute_async:
-                return [val async for val in gen]  # Collect all values in test context
-            return GeneratorWrapper(gen)
+                        asyncio.run(new_interp.visit(body_stmt, wrap_exceptions=True))
+            return GeneratorWrapper(generator())
         else:
             last_value = None
             try:
@@ -439,31 +429,8 @@ class AsyncGeneratorFunction:
                 finally:
                     self.running = False
 
-        caller_frame = inspect.currentframe().f_back
-        in_execute_async = False
-        while caller_frame:
-            if 'execute_async' in caller_frame.f_code.co_name:
-                in_execute_async = True
-                break
-            if caller_frame.f_locals and 'entry_point' in caller_frame.f_locals:
-                in_execute_async = True
-                break
-            caller_frame = caller_frame.f_back
-
-        # Fix: Return the async generator object unless collecting results
-        if in_execute_async:
-            async def collect_results():
-                gen = ProperAsyncGenerator()
-                results = []
-                try:
-                    async for value in gen:
-                        results.append(value)
-                    return results
-                except Exception as e:
-                    raise
-            return await collect_results()
-        else:
-            return ProperAsyncGenerator()
+        # Updated: Always return the async generator object
+        return ProperAsyncGenerator()
 
 
 class LambdaFunction:
