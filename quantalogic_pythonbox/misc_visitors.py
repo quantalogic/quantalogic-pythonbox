@@ -28,7 +28,16 @@ async def visit_Assert(self: ASTInterpreter, node: ast.Assert, wrap_exceptions: 
 
 async def visit_Yield(self: ASTInterpreter, node: ast.Yield, wrap_exceptions: bool = True) -> Any:
     value = await self.visit(node.value, wrap_exceptions=wrap_exceptions) if node.value else None
-    self.recursion_depth += 1  # Treat yields as recursion for loop detection
+    
+    # Check if we're in generator context
+    if hasattr(self, 'generator_context') and self.generator_context.get('active', False):
+        # If we're in an active generator context, store the value and signal yield
+        self.generator_context['yield_value'] = value
+        self.generator_context['yielded'] = True
+        return value
+    
+    # Original behavior for direct yield statements
+    self.recursion_depth += 1
     if self.recursion_depth > self.max_recursion_depth:
         raise RecursionError(f"Maximum recursion depth exceeded in yield ({self.max_recursion_depth})")
     self.recursion_depth -= 1
@@ -36,6 +45,15 @@ async def visit_Yield(self: ASTInterpreter, node: ast.Yield, wrap_exceptions: bo
 
 async def visit_YieldFrom(self: ASTInterpreter, node: ast.YieldFrom, wrap_exceptions: bool = True) -> Any:
     iterable = await self.visit(node.value, wrap_exceptions=wrap_exceptions)
+    
+    # Check if we're in generator context
+    if hasattr(self, 'generator_context') and self.generator_context.get('active', False):
+        # If we're in an active generator context, store the iterable and signal yield from
+        self.generator_context['yield_from_iterable'] = iterable
+        self.generator_context['yield_from'] = True
+        return iterable
+    
+    # Original behavior for direct yield from statements
     if hasattr(iterable, '__aiter__'):
         async def async_gen():
             async for value in iterable:

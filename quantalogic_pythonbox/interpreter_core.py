@@ -57,6 +57,15 @@ class ASTInterpreter:
         self.type_hints: Dict[str, Any] = {}  # Added for type aliases
         self.special_methods: Dict[str, Callable] = {}  # Added for special method dispatch
         self.ignore_typing: bool = ignore_typing  # Store the new option
+        
+        # Generator context to track and manage generators
+        self.generator_context = {
+            'active': False,
+            'yielded': False,
+            'yield_value': None, 
+            'yield_from': False,
+            'yield_from_iterable': None
+        }
 
         # Default safe_builtins if none provided
         default_safe_builtins: Dict[str, Any] = {
@@ -437,7 +446,7 @@ class ASTInterpreter:
         # Check if the instance is of the class type and has an __init__ method
         if isinstance(instance, cls) and hasattr(cls, '__init__'):
             init_method = cls.__init__
-            # Call __init__ only if it’s present and relevant
+            # Call __init__ only if it's present and relevant
             await self._execute_function(init_method, [instance] + list(args), kwargs)
         
         return instance

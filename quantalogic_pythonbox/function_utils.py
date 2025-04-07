@@ -235,7 +235,7 @@ class AsyncFunction:
                 return ret.value, local_vars
             return ret.value
         finally:
-            if not _return_locals:  # Only pop if we don’t need to keep the frame
+            if not _return_locals:  # Only pop if we don't need to keep the frame
                 new_env_stack.pop()
 
 class AsyncGeneratorFunction:
@@ -251,13 +251,15 @@ class AsyncGeneratorFunction:
         self.kwarg_name = kwarg_name
         self.pos_defaults = pos_defaults
         self.kw_defaults = kw_defaults
-        self.generator_state = None
 
     async def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        """Creates and returns an async generator"""
+        # Setup parameter processing similar to normal functions
         new_env_stack: List[Dict[str, Any]] = self.closure[:]
         local_frame: Dict[str, Any] = {}
         local_frame[self.node.name] = self
 
+        # Process positional arguments
         num_pos = len(self.pos_kw_params)
         for i, arg in enumerate(args):
             if i < num_pos:
@@ -271,6 +273,7 @@ class AsyncGeneratorFunction:
         if self.vararg_name and self.vararg_name not in local_frame:
             local_frame[self.vararg_name] = tuple()
 
+        # Process keyword arguments
         for kwarg_name, kwarg_value in kwargs.items():
             if kwarg_name in self.pos_kw_params or kwarg_name in self.kwonly_params:
                 if kwarg_name in local_frame:
@@ -283,6 +286,7 @@ class AsyncGeneratorFunction:
             else:
                 raise TypeError(f"Async generator '{self.node.name}' got an unexpected keyword argument '{kwarg_name}'")
 
+        # Apply defaults
         for param in self.pos_kw_params:
             if param not in local_frame and param in self.pos_defaults:
                 local_frame[param] = self.pos_defaults[param]
@@ -290,46 +294,80 @@ class AsyncGeneratorFunction:
             if param not in local_frame and param in self.kw_defaults:
                 local_frame[param] = self.kw_defaults[param]
 
+        # Check for missing required arguments
         missing_args = [param for param in self.pos_kw_params if param not in local_frame and param not in self.pos_defaults]
         missing_args += [param for param in self.kwonly_params if param not in local_frame and param not in self.kw_defaults]
         if missing_args:
             raise TypeError(f"Async generator '{self.node.name}' missing required arguments: {', '.join(missing_args)}")
 
+        # Create our environment and interpreter
         new_env_stack.append(local_frame)
         new_interp: ASTInterpreter = self.interpreter.spawn_from_env(new_env_stack)
 
-        async def generator():
-            nonlocal self
-            if self.generator_state is None:
-                self.generator_state = {"closed": False, "pending_value": None}
-                
-            for stmt in self.node.body:
-                if self.generator_state["closed"]:
-                    raise StopAsyncIteration
-                
-                if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Yield):
-                    value = await new_interp.visit(stmt.value, wrap_exceptions=True)
-                    yield value
-                elif isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.YieldFrom):
-                    sub_iterable = await new_interp.visit(stmt.value, wrap_exceptions=True)
-                    async for v in sub_iterable:
-                        yield v
-                else:
-                    await new_interp.visit(stmt, wrap_exceptions=True)
+        # Return a simple async generator that executes the body
+        async def simple_generator():
+            try:
+                # Each statement in the function body
+                for stmt in self.node.body:
+                    # Check if it's a yield expression
+                    if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Yield):
+                        # Visit the yield node and get its value
+                        value = await new_interp.visit(stmt.value.value, wrap_exceptions=True) if stmt.value.value else None
+                        yield value
+                    # Check if it's a yield from expression
+                    elif isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.YieldFrom):
+                        # Get the iterable being yielded from
+                        iterable = await new_interp.visit(stmt.value.value, wrap_exceptions=True)
+                        if hasattr(iterable, '__aiter__'):  # async iterable
+                            async for item in iterable:
+                                yield item
+                        else:  # regular iterable
+                            for item in iterable:
+                                yield item
+                    else:
+                        # Process other statements
+                        try:
+                            # For nodes containing yield statements within them (like loops)
+                            if any(isinstance(n, (ast.Yield, ast.YieldFrom)) for n in ast.walk(stmt)):
+                                # Set generator context to track yields
+                                new_interp.generator_context = {
+                                    'active': True,
+                                    'yielded': False,
+                                    'yield_value': None,
+                                    'yield_from': False,
+                                    'yield_from_iterable': None
+                                }
+                                
+                                # Execute the statement
+                                await new_interp.visit(stmt, wrap_exceptions=True)
+                                
+                                # Check if a yield was encountered
+                                if new_interp.generator_context['yielded']:
+                                    yield new_interp.generator_context['yield_value']
+                                
+                                # Check if yield from was encountered
+                                if new_interp.generator_context['yield_from']:
+                                    iterable = new_interp.generator_context['yield_from_iterable']
+                                    if hasattr(iterable, '__aiter__'):  # async iterable
+                                        async for item in iterable:
+                                            yield item
+                                    else:  # regular iterable
+                                        for item in iterable:
+                                            yield item
+                                            
+                                # Reset context
+                                new_interp.generator_context['active'] = False
+                            else:
+                                # For statements with no yields, just execute them
+                                await new_interp.visit(stmt, wrap_exceptions=True)
+                        except ReturnException:
+                            # Return terminates the generator
+                            return
+            except StopAsyncIteration:
+                # End the generator
+                return
 
-        return generator()
-
-    async def _send(self, gen, value):
-        try:
-            return await gen.asend(value)
-        except StopAsyncIteration:
-            raise
-
-    async def _throw(self, gen, exc):
-        try:
-            return await gen.athrow(exc)
-        except StopAsyncIteration:
-            raise
+        return simple_generator()
 
 class LambdaFunction:
     def __init__(self, node: ast.Lambda, closure: List[Dict[str, Any]], interpreter: ASTInterpreter,
