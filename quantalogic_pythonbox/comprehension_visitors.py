@@ -132,44 +132,86 @@ async def visit_GeneratorExp(self: ASTInterpreter, node: ast.GeneratorExp, wrap_
     base_frame = self.env_stack[-1].copy()
     self.env_stack.append(base_frame)
 
-    async def gen():
-        async def rec(gen_idx: int):
-            if gen_idx == len(node.generators):
-                yield await self.visit(node.elt, wrap_exceptions=True)
-            else:
-                comp = node.generators[gen_idx]
-                iterable = await self.visit(comp.iter, wrap_exceptions=wrap_exceptions)
-                if hasattr(iterable, '__aiter__'):
-                    try:
-                        async for item in iterable:
-                            # Use a single frame and update target variables
-                            await self.assign(comp.target, item)
-                            conditions = [await self.visit(if_clause, wrap_exceptions=True) for if_clause in comp.ifs]
-                            if all(conditions):
-                                async for val in rec(gen_idx + 1):
-                                    yield val
-                    except Exception as e:
-                        lineno = getattr(node, "lineno", 1)
-                        col = getattr(node, "col_offset", 0)
-                        context_line = self.source_lines[lineno - 1] if self.source_lines and lineno <= len(self.source_lines) else ""
-                        raise WrappedException(f"Error in async iteration: {str(e)}", e, lineno, col, context_line) from e
+    # Handle single generator case directly to ensure all values are yielded
+    if len(node.generators) == 1:
+        comp = node.generators[0]
+        iterable = await self.visit(comp.iter, wrap_exceptions=wrap_exceptions)
+        if hasattr(iterable, '__aiter__'):
+            async def gen():
+                try:
+                    async for item in iterable:
+                        new_frame = self.env_stack[-1].copy()
+                        self.env_stack.append(new_frame)
+                        await self.assign(comp.target, item)
+                        conditions = [await self.visit(if_clause, wrap_exceptions=True) for if_clause in comp.ifs]
+                        if all(conditions):
+                            yield await self.visit(node.elt, wrap_exceptions=True)
+                        self.env_stack.pop()
+                except Exception as e:
+                    lineno = getattr(node, "lineno", 1)
+                    col = getattr(node, "col_offset", 0)
+                    context_line = self.source_lines[lineno - 1] if self.source_lines and lineno <= len(self.source_lines) else ""
+                    raise WrappedException(f"Error in async iteration: {str(e)}", e, lineno, col, context_line) from e
+        else:
+            async def gen():
+                try:
+                    for item in iterable:
+                        new_frame = self.env_stack[-1].copy()
+                        self.env_stack.append(new_frame)
+                        await self.assign(comp.target, item)
+                        conditions = [await self.visit(if_clause, wrap_exceptions=True) for if_clause in comp.ifs]
+                        if all(conditions):
+                            yield await self.visit(node.elt, wrap_exceptions=True)
+                        self.env_stack.pop()
+                except TypeError as e:
+                    lineno = getattr(node, "lineno", 1)
+                    col = getattr(node, "col_offset", 0)
+                    context_line = self.source_lines[lineno - 1] if self.source_lines and lineno <= len(self.source_lines) else ""
+                    raise WrappedException(f"Object {iterable} is not iterable", e, lineno, col, context_line) from e
+    else:
+        # Preserve recursive handling for nested generators
+        async def gen():
+            async def rec(gen_idx: int):
+                if gen_idx == len(node.generators):
+                    yield await self.visit(node.elt, wrap_exceptions=True)
                 else:
-                    try:
-                        for item in iterable:
-                            # Use a single frame and update target variables
-                            await self.assign(comp.target, item)
-                            conditions = [await self.visit(if_clause, wrap_exceptions=True) for if_clause in comp.ifs]
-                            if all(conditions):
-                                async for val in rec(gen_idx + 1):
-                                    yield val
-                    except TypeError as e:
-                        lineno = getattr(node, "lineno", 1)
-                        col = getattr(node, "col_offset", 0)
-                        context_line = self.source_lines[lineno - 1] if self.source_lines and lineno <= len(self.source_lines) else ""
-                        raise WrappedException(f"Object {iterable} is not iterable", e, lineno, col, context_line) from e
+                    comp = node.generators[gen_idx]
+                    iterable = await self.visit(comp.iter, wrap_exceptions=wrap_exceptions)
+                    if hasattr(iterable, '__aiter__'):
+                        try:
+                            async for item in iterable:
+                                new_frame = self.env_stack[-1].copy()
+                                self.env_stack.append(new_frame)
+                                await self.assign(comp.target, item)
+                                conditions = [await self.visit(if_clause, wrap_exceptions=True) for if_clause in comp.ifs]
+                                if all(conditions):
+                                    async for val in rec(gen_idx + 1):
+                                        yield val
+                                self.env_stack.pop()
+                        except Exception as e:
+                            lineno = getattr(node, "lineno", 1)
+                            col = getattr(node, "col_offset", 0)
+                            context_line = self.source_lines[lineno - 1] if self.source_lines and lineno <= len(self.source_lines) else ""
+                            raise WrappedException(f"Error in async iteration: {str(e)}", e, lineno, col, context_line) from e
+                    else:
+                        try:
+                            for item in iterable:
+                                new_frame = self.env_stack[-1].copy()
+                                self.env_stack.append(new_frame)
+                                await self.assign(comp.target, item)
+                                conditions = [await self.visit(if_clause, wrap_exceptions=True) for if_clause in comp.ifs]
+                                if all(conditions):
+                                    async for val in rec(gen_idx + 1):
+                                        yield val
+                                self.env_stack.pop()
+                        except TypeError as e:
+                            lineno = getattr(node, "lineno", 1)
+                            col = getattr(node, "col_offset", 0)
+                            context_line = self.source_lines[lineno - 1] if self.source_lines and lineno <= len(self.source_lines) else ""
+                            raise WrappedException(f"Object {iterable} is not iterable", e, lineno, col, context_line) from e
 
-        async for val in rec(0):
-            yield val
+            async for val in rec(0):
+                yield val
 
-    # Return the async generator directly
+    self.env_stack.pop()
     return gen()
