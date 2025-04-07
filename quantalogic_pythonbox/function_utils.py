@@ -2,6 +2,7 @@ import ast
 import asyncio
 import inspect
 from typing import Any, Dict, List, Optional
+from collections import deque
 
 from .interpreter_core import ASTInterpreter
 from .exceptions import ReturnException
@@ -281,7 +282,6 @@ class AsyncGeneratorFunction:
         self.node: ast.AsyncFunctionDef = node
         self.closure: List[Dict[str, Any]] = closure[:]
         self.interpreter: ASTInterpreter = interpreter
-        # Fix: Support positional-only parameters
         self.posonly_params = [arg.arg for arg in node.args.posonlyargs] if hasattr(node.args, 'posonlyargs') else []
         self.pos_kw_params = pos_kw_params
         self.vararg_name = vararg_name
@@ -346,15 +346,39 @@ class AsyncGeneratorFunction:
         new_env_stack.append(local_frame)
         new_interp: ASTInterpreter = self.interpreter.spawn_from_env(new_env_stack)
 
-        node_body = self.node.body
+        # Store the function node locally
+        function_node = self.node
 
-        class ProperAsyncGenerator:
+        # Helper class to represent a frame of execution with state
+        class ExecutionFrame:
+            def __init__(self, node, is_for_loop=False):
+                self.node = node
+                self.is_for_loop = is_for_loop
+                self.index = 0
+                self.variables = {}
+                
+                # For loop specific
+                if is_for_loop:
+                    self.target = node.target
+                    self.iterator = None
+                    self.is_async_iterator = False
+                    
+                # Determine statements to execute
+                if hasattr(node, 'body'):
+                    self.statements = node.body
+                elif isinstance(node, list):
+                    self.statements = node
+                else:
+                    self.statements = [node]
+
+        class ImprovedAsyncGenerator:
             def __init__(self):
                 self.running = False
                 self.exhausted = False
-                self.current_index = 0
-                self.statements = node_body
-                self.yield_from_state = {}
+                self.execution_stack = deque()
+                # Use the function node passed from outer scope
+                self.node = function_node
+                self.execution_stack.append(ExecutionFrame(self.node.body))
                 new_interp.generator_context = {
                     'active': True,
                     'yielded': False,
@@ -364,46 +388,153 @@ class AsyncGeneratorFunction:
                     'sent_value': None
                 }
                 self.interpreter = new_interp
+                self.raise_pending = None
 
             def __aiter__(self):
                 return self
+
+            async def initialize_for_loop(self, frame):
+                try:
+                    # Get the iterable
+                    iterable = await self.interpreter.visit(frame.node.iter, wrap_exceptions=True)
+                    # Create an iterator
+                    if hasattr(iterable, '__aiter__'):
+                        frame.iterator = await iterable.__aiter__()
+                        frame.is_async_iterator = True
+                    else:
+                        frame.iterator = iter(iterable)
+                        frame.is_async_iterator = False
+                    return True
+                except Exception as e:
+                    frame.iterator = None
+                    return False
+
+            async def advance_for_loop(self, frame):
+                try:
+                    # Get the next item
+                    if frame.is_async_iterator:
+                        try:
+                            item = await frame.iterator.__anext__()
+                        except StopAsyncIteration:
+                            return False
+                    else:
+                        try:
+                            item = next(frame.iterator)
+                        except StopIteration:
+                            return False
+                    
+                    # Assign to target
+                    await self.interpreter.assign(frame.target, item)
+                    
+                    # Push loop body to execution stack
+                    self.execution_stack.append(ExecutionFrame(frame.node.body))
+                    return True
+                except Exception as e:
+                    # Skip to loop end on error
+                    return False
 
             async def __anext__(self):
                 if self.exhausted:
                     raise StopAsyncIteration
                 if self.running:
                     raise RuntimeError("AsyncGenerator already running")
+                
                 try:
                     self.running = True
-                    while self.current_index < len(self.statements):
-                        stmt = self.statements[self.current_index]
-                        # Fix: Properly handle raises in async generators
-                        if isinstance(stmt, ast.Raise):
-                            exc = await self.interpreter.visit(stmt, wrap_exceptions=True)
-                            raise exc
-                        
-                        # Process the current statement
-                        await self.interpreter.visit(stmt, wrap_exceptions=True)
-                        
-                        # Check if a yield occurred during statement processing
-                        if self.interpreter.generator_context['yielded']:
-                            self.interpreter.generator_context['yielded'] = False
-                            value = self.interpreter.generator_context['yield_value']
-                            
-                            # FIXED: Always increment the current_index after processing a statement,
-                            # even when a yield is encountered. This ensures we move to the next statement
-                            # on the next __anext__ call, and don't get stuck in an infinite loop.
-                            self.current_index += 1
-                            return value
-                            
-                        # Increment index if no yield occurred
-                        self.current_index += 1
                     
-                    # If we reach here, we've exhausted all statements
+                    # Handle any pending exceptions
+                    if self.raise_pending:
+                        exc = self.raise_pending
+                        self.raise_pending = None
+                        raise exc
+                    
+                    # Run until we yield a value or exhaust the generator
+                    while self.execution_stack:
+                        # Get current execution frame
+                        frame = self.execution_stack[-1]
+                        
+                        # If we've processed all statements in this frame
+                        if frame.index >= len(frame.statements):
+                            self.execution_stack.pop()
+                            
+                            # If this was a loop body, go back to the loop head
+                            if self.execution_stack and self.execution_stack[-1].is_for_loop:
+                                loop_frame = self.execution_stack[-1]
+                                has_more = await self.advance_for_loop(loop_frame)
+                                if not has_more:
+                                    self.execution_stack.pop()  # Loop is done
+                            continue
+                        
+                        # Get current statement
+                        stmt = frame.statements[frame.index]
+                        
+                        # Special handling for different statement types
+                        if isinstance(stmt, (ast.For, ast.AsyncFor)):
+                            # Initialize this as a for loop
+                            loop_frame = ExecutionFrame(stmt, is_for_loop=True)
+                            success = await self.initialize_for_loop(loop_frame)
+                            
+                            if success:
+                                # Push the loop frame
+                                self.execution_stack.append(loop_frame)
+                                # Start the first iteration
+                                has_items = await self.advance_for_loop(loop_frame)
+                                if not has_items:
+                                    self.execution_stack.pop()  # Empty loop
+                            
+                            # Move to next statement
+                            frame.index += 1
+                            continue
+                        
+                        # For Expr nodes that might contain yields
+                        if isinstance(stmt, ast.Expr) and isinstance(stmt.value, (ast.Yield, ast.YieldFrom)):
+                            value = await self.interpreter.visit(stmt.value, wrap_exceptions=True)
+                            frame.index += 1  # Move to next statement for next time
+                            
+                            # Check if a yield was registered during execution
+                            if self.interpreter.generator_context.get('yielded'):
+                                self.interpreter.generator_context['yielded'] = False
+                                value = self.interpreter.generator_context.get('yield_value')
+                                return value
+                            
+                            # For raw yields that might not go through the generator context
+                            return value
+                        
+                        # Execute the current statement
+                        try:
+                            result = await self.interpreter.visit(stmt, wrap_exceptions=True)
+                        except ReturnException as ret:
+                            # Return ends the generator with the return value
+                            self.exhausted = True
+                            if ret.value is not None:
+                                return ret.value
+                            raise StopAsyncIteration
+                        except Exception as e:
+                            # Re-raise any other exceptions
+                            raise
+                        
+                        # Check if a yield occurred during execution
+                        if self.interpreter.generator_context.get('yielded'):
+                            self.interpreter.generator_context['yielded'] = False
+                            value = self.interpreter.generator_context.get('yield_value')
+                            
+                            # Move to the next statement
+                            frame.index += 1
+                            return value
+                        
+                        # Move to the next statement if no yield occurred
+                        frame.index += 1
+                    
+                    # If we've run out of statements, the generator is exhausted
                     self.exhausted = True
                     raise StopAsyncIteration
-                except Exception as e:
+                    
+                except StopAsyncIteration:
                     self.exhausted = True
+                    raise
+                except Exception as e:
+                    if not isinstance(e, StopAsyncIteration):
+                        self.exhausted = True
                     raise
                 finally:
                     self.running = False
@@ -413,36 +544,55 @@ class AsyncGeneratorFunction:
                     raise StopAsyncIteration
                 if self.running:
                     raise RuntimeError("AsyncGenerator already running")
-                try:
-                    self.running = True
-                    self.interpreter.generator_context['sent_value'] = value
-                    return await self.__anext__()
-                finally:
-                    self.running = False
+                
+                # Set the sent value
+                self.interpreter.generator_context['sent_value'] = value
+                
+                # Continue execution
+                return await self.__anext__()
 
-            async def athrow(self, exc):
+            async def athrow(self, exc_type, exc_val=None, exc_tb=None):
                 if self.exhausted:
                     raise StopAsyncIteration
                 if self.running:
                     raise RuntimeError("AsyncGenerator already running")
+                
+                # Create the exception
+                if exc_val is None:
+                    exc_val = exc_type()
+                elif isinstance(exc_val, type):
+                    exc_val = exc_val()
+                
+                # Store the exception to be raised during next execution
+                self.raise_pending = exc_val
+                
                 try:
-                    self.running = True
-                    raise exc
-                finally:
-                    self.running = False
+                    # Try to resume execution - the exception will be thrown
+                    return await self.__anext__()
+                except StopAsyncIteration:
+                    # If the generator is exhausted, propagate StopAsyncIteration
+                    raise
+                except Exception as e:
+                    # If the exception wasn't handled, the generator is exhausted
+                    self.exhausted = True
+                    raise
 
             async def aclose(self):
-                if self.exhausted or not self.running:
+                if self.exhausted:
                     return
+                
                 try:
-                    self.running = True
-                    self.exhausted = True
-                    raise GeneratorExit("AsyncGenerator closed")
-                finally:
-                    self.running = False
+                    # Try to throw GeneratorExit
+                    await self.athrow(GeneratorExit)
+                except (StopAsyncIteration, GeneratorExit):
+                    # This is expected
+                    pass
+                
+                # Ensure we're marked as exhausted
+                self.exhausted = True
 
-        # Updated: Always return the async generator object
-        return ProperAsyncGenerator()
+        # Return the async generator instance
+        return ImprovedAsyncGenerator()
 
 
 class LambdaFunction:
