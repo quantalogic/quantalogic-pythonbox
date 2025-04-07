@@ -381,13 +381,25 @@ class AsyncGeneratorFunction:
                         if isinstance(stmt, ast.Raise):
                             exc = await self.interpreter.visit(stmt, wrap_exceptions=True)
                             raise exc
+                        
+                        # Process the current statement
                         await self.interpreter.visit(stmt, wrap_exceptions=True)
+                        
+                        # Check if a yield occurred during statement processing
                         if self.interpreter.generator_context['yielded']:
                             self.interpreter.generator_context['yielded'] = False
                             value = self.interpreter.generator_context['yield_value']
+                            
+                            # FIXED: Always increment the current_index after processing a statement,
+                            # even when a yield is encountered. This ensures we move to the next statement
+                            # on the next __anext__ call, and don't get stuck in an infinite loop.
                             self.current_index += 1
                             return value
+                            
+                        # Increment index if no yield occurred
                         self.current_index += 1
+                    
+                    # If we reach here, we've exhausted all statements
                     self.exhausted = True
                     raise StopAsyncIteration
                 except Exception as e:
