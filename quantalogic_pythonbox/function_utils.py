@@ -317,11 +317,7 @@ class AsyncGeneratorFunction:
                 else:
                     await new_interp.visit(stmt, wrap_exceptions=True)
 
-        gen = generator()
-        gen.send = lambda value: asyncio.run_coroutine_threadsafe(self._send(gen, value), self.interpreter.loop).result()
-        gen.throw = lambda exc: asyncio.run_coroutine_threadsafe(self._throw(gen, exc), self.interpreter.loop).result()
-        gen.close = lambda: setattr(self.generator_state, "closed", True)
-        return gen
+        return generator()
 
     async def _send(self, gen, value):
         try:

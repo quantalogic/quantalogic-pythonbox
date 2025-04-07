@@ -7,6 +7,10 @@ from .exceptions import WrappedException
 from .function_utils import AsyncFunction, Function, LambdaFunction, AsyncGeneratorFunction
 from .interpreter_core import ASTInterpreter
 
+# Helper function to detect if a node contains yield or yield from
+def contains_yield(node):
+    return any(isinstance(n, (ast.Yield, ast.YieldFrom)) for n in ast.walk(node))
+
 async def visit_FunctionDef(self: ASTInterpreter, node: ast.FunctionDef, wrap_exceptions: bool = True) -> None:
     closure: List[Dict[str, Any]] = self.env_stack[:]
     pos_kw_params = [arg.arg for arg in node.args.args]
@@ -45,28 +49,12 @@ async def visit_AsyncFunctionDef(self: ASTInterpreter, node: ast.AsyncFunctionDe
     kw_defaults = dict(zip(kwonly_params, kw_defaults_values))
     kw_defaults = {k: v for k, v in kw_defaults.items() if v is not None}
 
-    func = AsyncFunction(node, closure, self, pos_kw_params, vararg_name, kwonly_params, kwarg_name, pos_defaults, kw_defaults)
-    for decorator in reversed(node.decorator_list):
-        dec = await self.visit(decorator, wrap_exceptions=True)
-        if asyncio.iscoroutine(dec):
-            dec = await dec
-        func = await self._execute_function(dec, [func], {})
-    self.set_variable(node.name, func)
+    # Determine if this is an async generator by checking for yield statements
+    if contains_yield(node):
+        func = AsyncGeneratorFunction(node, closure, self, pos_kw_params, vararg_name, kwonly_params, kwarg_name, pos_defaults, kw_defaults)
+    else:
+        func = AsyncFunction(node, closure, self, pos_kw_params, vararg_name, kwonly_params, kwarg_name, pos_defaults, kw_defaults)
 
-async def visit_AsyncGeneratorDef(self: ASTInterpreter, node: ast.AsyncFunctionDef, wrap_exceptions: bool = True) -> None:
-    closure: List[Dict[str, Any]] = self.env_stack[:]
-    pos_kw_params = [arg.arg for arg in node.args.args]
-    vararg_name = node.args.vararg.arg if node.args.vararg else None
-    kwonly_params = [arg.arg for arg in node.args.kwonlyargs]
-    kwarg_name = node.args.kwarg.arg if node.args.kwarg else None
-    pos_defaults_values = [await self.visit(default, wrap_exceptions=True) for default in node.args.defaults]
-    num_pos_defaults = len(pos_defaults_values)
-    pos_defaults = dict(zip(pos_kw_params[-num_pos_defaults:], pos_defaults_values)) if num_pos_defaults else {}
-    kw_defaults_values = [await self.visit(default, wrap_exceptions=True) if default else None for default in node.args.kw_defaults]
-    kw_defaults = dict(zip(kwonly_params, kw_defaults_values))
-    kw_defaults = {k: v for k, v in kw_defaults.items() if v is not None}
-
-    func = AsyncGeneratorFunction(node, closure, self, pos_kw_params, vararg_name, kwonly_params, kwarg_name, pos_defaults, kw_defaults)
     for decorator in reversed(node.decorator_list):
         dec = await self.visit(decorator, wrap_exceptions=True)
         if asyncio.iscoroutine(dec):
@@ -149,7 +137,7 @@ async def visit_Call(self: ASTInterpreter, node: ast.Call, is_await_context: boo
             result = func.fget(*evaluated_args, **kwargs)
         else:
             result = func(*evaluated_args, **kwargs)
-    elif asyncio.iscoroutinefunction(func) or isinstance(func, AsyncFunction):
+    elif asyncio.iscoroutinefunction(func) or isinstance(func, (AsyncFunction, AsyncGeneratorFunction)):
         result = func(*evaluated_args, **kwargs)
         if not is_await_context:
             result = await result
@@ -158,8 +146,6 @@ async def visit_Call(self: ASTInterpreter, node: ast.Call, is_await_context: boo
             await func(*evaluated_args, **kwargs)
             return None
         result = await func(*evaluated_args, **kwargs)
-    elif isinstance(func, AsyncGeneratorFunction):
-        return func(*evaluated_args, **kwargs)
     else:
         result = func(*evaluated_args, **kwargs)
         if asyncio.iscoroutine(result) and not is_await_context:
