@@ -545,10 +545,10 @@ class AsyncGeneratorFunction:
                 if self.running:
                     raise RuntimeError("AsyncGenerator already running")
                 
-                # Set the sent value
+                # Set the sent value in the context
                 self.interpreter.generator_context['sent_value'] = value
                 
-                # Continue execution
+                # Continue execution to get the next yielded value
                 return await self.__anext__()
 
             async def athrow(self, exc_type, exc_val=None, exc_tb=None):
@@ -557,24 +557,39 @@ class AsyncGeneratorFunction:
                 if self.running:
                     raise RuntimeError("AsyncGenerator already running")
                 
-                # Create the exception
+                # Create the exception if needed
                 if exc_val is None:
-                    exc_val = exc_type()
+                    if isinstance(exc_type, type):
+                        exc_val = exc_type()
+                    else:
+                        exc_val = exc_type
                 elif isinstance(exc_val, type):
                     exc_val = exc_val()
                 
-                # Store the exception to be raised during next execution
+                # Store the exception to be raised during the next execution
                 self.raise_pending = exc_val
                 
+                # Try to resume execution - the exception will be thrown at the yield point
                 try:
-                    # Try to resume execution - the exception will be thrown
                     return await self.__anext__()
                 except StopAsyncIteration:
                     # If the generator is exhausted, propagate StopAsyncIteration
+                    self.exhausted = True
                     raise
                 except Exception as e:
-                    # If the exception wasn't handled, the generator is exhausted
-                    self.exhausted = True
+                    # If the exception wasn't handled inside the generator,
+                    # it will be propagated here. Check if it's the original 
+                    # exception or a new one from handling the throw
+                    if e is exc_val:
+                        # The original exception wasn't handled
+                        raise
+                    
+                    # Check if any yield occurred during exception handling
+                    if self.interpreter.generator_context.get('yielded'):
+                        self.interpreter.generator_context['yielded'] = False
+                        return self.interpreter.generator_context.get('yield_value')
+                    
+                    # Otherwise propagate the new exception
                     raise
 
             async def aclose(self):
@@ -582,13 +597,19 @@ class AsyncGeneratorFunction:
                     return
                 
                 try:
-                    # Try to throw GeneratorExit
+                    # Try to throw GeneratorExit - this should cause the generator
+                    # to exit, possibly executing finally blocks
                     await self.athrow(GeneratorExit)
                 except (StopAsyncIteration, GeneratorExit):
-                    # This is expected
+                    # These exceptions indicate proper closure
                     pass
+                except Exception:
+                    # Any other exception during closure is concerning
+                    # but we still need to mark as exhausted
+                    self.exhausted = True
+                    raise
                 
-                # Ensure we're marked as exhausted
+                # Ensure the generator is marked as exhausted
                 self.exhausted = True
 
         # Return the async generator instance

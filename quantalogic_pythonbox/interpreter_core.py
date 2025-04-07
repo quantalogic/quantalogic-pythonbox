@@ -62,7 +62,8 @@ class ASTInterpreter:
             'yielded': False,
             'yield_value': None, 
             'yield_from': False,
-            'yield_from_iterable': None
+            'yield_from_iterable': None,
+            'sent_value': None
         }
 
         def raise_(exc):
@@ -143,6 +144,8 @@ class ASTInterpreter:
             'RuntimeError': RuntimeError,
             'NotImplementedError': NotImplementedError,
             'StopIteration': StopIteration,
+            'StopAsyncIteration': StopAsyncIteration,
+            'GeneratorExit': GeneratorExit,
             'AssertionError': AssertionError,
             'json': json,
             'math': math,
