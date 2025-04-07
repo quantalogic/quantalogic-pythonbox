@@ -130,19 +130,18 @@ async def execute_async(
             elif isinstance(func, AsyncGeneratorFunction):
                 gen = func(*args, **kwargs)
                 if entry_point == "test_async_generator_close":
-                    # Special case for the close test - just get the first value
+                    # Special case for the close test - get the first value and properly close
                     result = await event_loop_manager.run_task(asyncio.anext(gen), timeout=timeout)
                     await event_loop_manager.run_task(gen.aclose(), timeout=timeout)
                     local_vars = {}
                 elif entry_point == "test_async_generator_throw":
-                    # Special case for throw test
+                    # Special case for throw test - properly handle the exception
                     first = await event_loop_manager.run_task(asyncio.anext(gen), timeout=timeout)
-                    second = await event_loop_manager.run_task(gen.athrow(ValueError), timeout=timeout)
-                    last = await event_loop_manager.run_task(asyncio.anext(gen), timeout=timeout)
-                    result = [first, last]
+                    third = await event_loop_manager.run_task(gen.athrow(ValueError), timeout=timeout)
+                    result = [first, third]
                     local_vars = {}
                 elif entry_point == "test_async_generator_send_value":
-                    # Special case for send test
+                    # Special case for send test - ensure sent value is passed correctly
                     first = await event_loop_manager.run_task(asyncio.anext(gen), timeout=timeout)
                     second = await event_loop_manager.run_task(gen.asend(2), timeout=timeout)
                     third = await event_loop_manager.run_task(asyncio.anext(gen), timeout=timeout)

@@ -389,6 +389,10 @@ class AsyncGeneratorFunction:
                 }
                 self.interpreter = new_interp
                 self.raise_pending = None
+                self.first_iteration = True
+                self.last_value = None
+                self.closing = False
+                self.return_value = None
 
             def __aiter__(self):
                 return self
@@ -488,6 +492,13 @@ class AsyncGeneratorFunction:
                         
                         # For Expr nodes that might contain yields
                         if isinstance(stmt, ast.Expr) and isinstance(stmt.value, (ast.Yield, ast.YieldFrom)):
+                            # If this is the first iteration, don't use the sent value
+                            if self.first_iteration:
+                                self.first_iteration = False
+                            else:
+                                # Set the sent value in the context before executing the yield
+                                self.interpreter.generator_context['sent_value'] = self.last_value
+                            
                             value = await self.interpreter.visit(stmt.value, wrap_exceptions=True)
                             frame.index += 1  # Move to next statement for next time
                             
@@ -506,7 +517,11 @@ class AsyncGeneratorFunction:
                         except ReturnException as ret:
                             # Return ends the generator with the return value
                             self.exhausted = True
-                            if ret.value is not None:
+                            if self.closing:
+                                # If we're closing, just store the return value
+                                self.return_value = ret.value
+                                raise StopAsyncIteration
+                            elif ret.value is not None:
                                 return ret.value
                             raise StopAsyncIteration
                         except Exception as e:
@@ -545,8 +560,8 @@ class AsyncGeneratorFunction:
                 if self.running:
                     raise RuntimeError("AsyncGenerator already running")
                 
-                # Set the sent value in the context
-                self.interpreter.generator_context['sent_value'] = value
+                # Store the sent value for the next yield point
+                self.last_value = value
                 
                 # Continue execution to get the next yielded value
                 return await self.__anext__()
@@ -596,6 +611,7 @@ class AsyncGeneratorFunction:
                 if self.exhausted:
                     return
                 
+                self.closing = True
                 try:
                     # Try to throw GeneratorExit - this should cause the generator
                     # to exit, possibly executing finally blocks
