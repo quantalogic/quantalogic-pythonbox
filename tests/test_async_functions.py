@@ -45,12 +45,18 @@ async def test_async_exception_handling():
 @pytest.mark.asyncio
 async def test_async_enumerate():
     result = await execute_async('''
+    async def async_enumerate(async_iterable, start=0):
+        i = start
+        async for item in async_iterable:
+            yield i, item
+            i += 1
+
     async def gen():
         yield 'a'
         yield 'b'
         yield 'c'
     
-    [(i, x) async for i, x in enumerate(gen())]
+    [(i, x) async for i, x in async_enumerate(gen())]
     ''')
     assert result.result == [(0, 'a'), (1, 'b'), (2, 'c')]
 
@@ -63,8 +69,9 @@ async def test_async_sort_with_lambda():
         return x
     
     items = [3, 1, 4, 2]
-    sorted_items = sorted(items, key=lambda x: get_value(x))
-    [await x for x in sorted_items]
+    keys = [await get_value(x) for x in items]
+    sorted_items = sorted(items, key=lambda x: keys[items.index(x)])
+    sorted_items
     ''', allowed_modules=['asyncio'])
     assert result.result == [1, 2, 3, 4]
 
@@ -107,6 +114,10 @@ async def test_async_hn_processing():
     
     await main()
     ''', allowed_modules=['asyncio'])
+    
+    # Debug output if the test fails
+    if result.error:
+        print(f"Error: {result.error}")
     
     # Check if the report contains expected content
     assert "# Top Hacker News Articles" in result.result
