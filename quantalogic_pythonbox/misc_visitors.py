@@ -1,72 +1,105 @@
 import ast
+import logging
 from typing import Any
 
 from .interpreter_core import ASTInterpreter
 
+logging.basicConfig(level=logging.DEBUG)  # Set debug level
+
+# Configure logging
+logger = logging.getLogger(__name__)
+
 async def visit_Global(self: ASTInterpreter, node: ast.Global, wrap_exceptions: bool = True) -> None:
+    logger.debug(f"Visiting Global: {node.names}")
     self.env_stack[-1].setdefault("__global_names__", set()).update(node.names)
 
 async def visit_Nonlocal(self: ASTInterpreter, node: ast.Nonlocal, wrap_exceptions: bool = True) -> None:
+    logger.debug(f"Visiting Nonlocal: {node.names}")
     self.env_stack[-1].setdefault("__nonlocal_names__", set()).update(node.names)
 
 async def visit_Delete(self: ASTInterpreter, node: ast.Delete, wrap_exceptions: bool = True):
+    logger.debug("Visiting Delete")
     for target in node.targets:
         if isinstance(target, ast.Name):
             del self.env_stack[-1][target.id]
+            logger.debug(f"Deleted variable: {target.id}")
         elif isinstance(target, ast.Subscript):
             obj = await self.visit(target.value, wrap_exceptions=wrap_exceptions)
             key = await self.visit(target.slice, wrap_exceptions=wrap_exceptions)
             del obj[key]
+            logger.debug(f"Deleted subscript: {obj}[{key}]")
         else:
             raise Exception(f"Unsupported del target: {type(target).__name__}")
 
 async def visit_Assert(self: ASTInterpreter, node: ast.Assert, wrap_exceptions: bool = True) -> None:
+    logger.debug("Visiting Assert")
     test = await self.visit(node.test, wrap_exceptions=wrap_exceptions)
     if not test:
         msg = await self.visit(node.msg, wrap_exceptions=wrap_exceptions) if node.msg else "Assertion failed"
+        logger.debug(f"Assertion failed: {msg}")
         raise AssertionError(msg)
 
 async def visit_Yield(self: ASTInterpreter, node: ast.Yield, wrap_exceptions: bool = True) -> Any:
+    logger.debug("Visiting Yield")
     value = await self.visit(node.value, wrap_exceptions=wrap_exceptions) if node.value else None
-    
-    # Check if we're in generator context
-    if hasattr(self, 'generator_context') and self.generator_context.get('active', False):
-        # Store the value and signal yield
-        self.generator_context['yield_value'] = value
-        self.generator_context['yielded'] = True
-        # Return the sent value (None on first yield or if not sent)
-        return self.generator_context.get('sent_value', None)
-    
-    # Original behavior for direct yield statements
+    if 'yield_queue' in self.generator_context and self.generator_context.get('active', False):
+        logger.debug(f"Putting value into yield_queue: {value}")
+        await self.generator_context['yield_queue'].put(value)
+        logger.debug("Waiting for sent value from sent_queue")
+        sent_value = await self.generator_context['sent_queue'].get()
+        logger.debug(f"Received sent value: {sent_value}")
+        if isinstance(sent_value, BaseException):
+            logger.debug(f"Raising exception from sent value: {sent_value}")
+            raise sent_value
+        return sent_value
     self.recursion_depth += 1
     if self.recursion_depth > self.max_recursion_depth:
+        logger.debug("Recursion depth exceeded")
         raise RecursionError(f"Maximum recursion depth exceeded in yield ({self.max_recursion_depth})")
     self.recursion_depth -= 1
+    logger.debug(f"Returning value in non-generator context: {value}")
     return value
 
 async def visit_YieldFrom(self: ASTInterpreter, node: ast.YieldFrom, wrap_exceptions: bool = True) -> Any:
+    logger.debug("Visiting YieldFrom")
     iterable = await self.visit(node.value, wrap_exceptions=wrap_exceptions)
-    
-    # Check if we're in generator context
-    if hasattr(self, 'generator_context') and self.generator_context.get('active', False):
-        # Store the iterable and signal yield from
-        self.generator_context['yield_from_iterable'] = iterable
-        self.generator_context['yield_from'] = True
-        return iterable
-    
-    # Original behavior for direct yield from statements
+    if 'yield_queue' in self.generator_context and self.generator_context.get('active', False):
+        if hasattr(iterable, '__aiter__'):
+            logger.debug("Handling async iterable in YieldFrom")
+            async for val in iterable:
+                logger.debug(f"Yielding value from async iterable: {val}")
+                await self.generator_context['yield_queue'].put(val)
+                sent_value = await self.generator_context['sent_queue'].get()
+                logger.debug(f"Received sent value: {sent_value}")
+                if isinstance(sent_value, BaseException):
+                    logger.debug(f"Raising exception: {sent_value}")
+                    raise sent_value
+        else:
+            logger.debug("Handling sync iterable in YieldFrom")
+            for val in iterable:
+                logger.debug(f"Yielding value from sync iterable: {val}")
+                await self.generator_context['yield_queue'].put(val)
+                sent_value = await self.generator_context['sent_queue'].get()
+                logger.debug(f"Received sent value: {sent_value}")
+                if isinstance(sent_value, BaseException):
+                    logger.debug(f"Raising exception: {sent_value}")
+                    raise sent_value
+        return None
     if hasattr(iterable, '__aiter__'):
         async def async_gen():
             async for value in iterable:
                 yield value
+        logger.debug("Returning async generator for YieldFrom")
         return async_gen()
     else:
         def sync_gen():
             for value in iterable:
                 yield value
+        logger.debug("Returning sync generator for YieldFrom")
         return sync_gen()
 
 async def visit_Match(self: ASTInterpreter, node: ast.Match, wrap_exceptions: bool = True) -> Any:
+    logger.debug("Visiting Match")
     subject = await self.visit(node.subject, wrap_exceptions=wrap_exceptions)
     result = None
     base_frame = self.env_stack[-1].copy()
@@ -82,9 +115,11 @@ async def visit_Match(self: ASTInterpreter, node: ast.Match, wrap_exceptions: bo
                 break
         finally:
             self.env_stack.pop()
+    logger.debug(f"Match result: {result}")
     return result
 
 async def _match_pattern(self: ASTInterpreter, subject: Any, pattern: ast.AST) -> bool:
+    logger.debug(f"Matching pattern for subject: {subject}")
     if isinstance(pattern, ast.MatchValue):
         value = await self.visit(pattern.value, wrap_exceptions=True)
         return subject == value
