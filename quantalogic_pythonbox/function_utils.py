@@ -300,7 +300,7 @@ class AsyncFunction:
 
         missing_args = [param for param in self.posonly_params if param not in local_frame]
         missing_args += [param for param in self.pos_kw_params if param not in local_frame and param not in self.pos_defaults]
-        missing_args += [param for param in self.kwonly_params if param not in local_frame and param not in self.kw_defaults]
+        missing_args += [param for param in self.kwonly_params if param not in local_frame and param in self.kw_defaults]
         if missing_args:
             raise TypeError(f"Async function '{self.node.name}' missing required arguments: {', '.join(missing_args)}")
 
@@ -322,6 +322,13 @@ class AsyncFunction:
         finally:
             if not _return_locals:
                 new_env_stack.pop()
+
+    def __get__(self, instance: Any, owner: Any):
+        if instance is None:
+            return self
+        async def bound_method(*args: Any, **kwargs: Any) -> Any:
+            return await self(instance, *args, **kwargs)
+        return bound_method
 
 
 class AsyncGeneratorFunction:
@@ -584,6 +591,8 @@ class AsyncGeneratorFunction:
                 new_interp.generator_context['closed'] = True
                 logger.debug(f"Generator closed, returning: {self.return_value}")
                 return self.return_value
+
+
 
         logger.debug("Returning AsyncGenerator instance")
         return AsyncGenerator()
