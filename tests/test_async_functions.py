@@ -167,7 +167,8 @@ async def test_async_sort_error_and_solution():
     
     items = [HNItem("Item A", 300), HNItem("Item B", 200), HNItem("Item C", 400)]
     scores = [await item.get_score() for item in items]
-    sorted_items = [item for _, item in sorted(zip(scores, items), key=lambda pair: pair[0], reverse=True)]
+    sorted_pairs = sorted(zip(scores, items), key=lambda pair: pair[0], reverse=True)
+    sorted_items = [pair[1] for pair in sorted_pairs]
     [item.title for item in sorted_items]
     ''', allowed_modules=['asyncio'])
     

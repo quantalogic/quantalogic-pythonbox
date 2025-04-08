@@ -92,7 +92,7 @@ async def execute_async(
     event_loop_manager = ControlledEventLoop()
     
     try:
-        dedented_code = textwrap.dedent(code)  # Use dedented code for consistency
+        dedented_code = textwrap.dedent(code).strip()  # Use dedented code for consistency
         ast_tree = optimize_ast(ast.parse(dedented_code))
         loop = await event_loop_manager.get_loop()
         
