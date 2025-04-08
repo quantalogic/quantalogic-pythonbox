@@ -722,16 +722,6 @@ class AsyncGeneratorFunction:
 
         # Create and return the async generator
         async_gen = ImprovedAsyncGenerator()
-        
-        # For specific test cases, handle empty generator detection
-        if self.node.name == 'async_gen' and len(self.node.body) == 1:
-            if isinstance(self.node.body[0], ast.If) and isinstance(self.node.body[0].test, ast.Constant):
-                if self.node.body[0].test.value is False:
-                    try:
-                        await async_gen.__anext__()
-                    except StopAsyncIteration:
-                        return 'Empty generator'
-        
         return async_gen
 
 
