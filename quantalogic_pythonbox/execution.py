@@ -92,7 +92,8 @@ async def execute_async(
     event_loop_manager = ControlledEventLoop()
     
     try:
-        ast_tree = optimize_ast(ast.parse(textwrap.dedent(code)))
+        dedented_code = textwrap.dedent(code)  # Use dedented code for consistency
+        ast_tree = optimize_ast(ast.parse(dedented_code))
         loop = await event_loop_manager.get_loop()
         
         safe_namespace = namespace.copy() if namespace else {}
@@ -103,7 +104,7 @@ async def execute_async(
             restrict_os=True,
             namespace=safe_namespace,
             max_memory_mb=max_memory_mb,
-            source=code,
+            source=dedented_code,  # Pass dedented_code instead of original code
             ignore_typing=ignore_typing
         )
         interpreter.loop = loop

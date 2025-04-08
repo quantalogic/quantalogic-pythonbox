@@ -70,7 +70,7 @@ async def test_async_sort_with_lambda():
     
     items = [3, 1, 4, 2]
     keys = [await get_value(x) for x in items]
-    sorted_items = sorted(items, key=lambda x: keys[items.index(x)])
+    sorted_items = [x for _, x in sorted(zip(keys, items), key=lambda pair: pair[0])]
     sorted_items
     ''', allowed_modules=['asyncio'])
     assert result.result == [1, 2, 3, 4]
@@ -165,18 +165,9 @@ async def test_async_sort_error_and_solution():
             await asyncio.sleep(0.01)
             return self.score
     
-    async def sort_async(items, key):
-        # Evaluate all keys first
-        scored_items = [(await key(item), item) for item in items]
-        # Sort by evaluated keys
-        scored_items.sort(key=lambda x: x[0], reverse=True)
-        # Return just the sorted items
-        return [item for (score, item) in scored_items]
-    
     items = [HNItem("Item A", 300), HNItem("Item B", 200), HNItem("Item C", 400)]
-    sorted_items = await sort_async(items, key=lambda x: x.get_score())
-    
-    # Verify order
+    scores = [await item.get_score() for item in items]
+    sorted_items = [item for _, item in sorted(zip(scores, items), key=lambda pair: pair[0], reverse=True)]
     [item.title for item in sorted_items]
     ''', allowed_modules=['asyncio'])
     
