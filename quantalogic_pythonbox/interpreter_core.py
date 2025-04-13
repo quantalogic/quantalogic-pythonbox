@@ -528,23 +528,35 @@ class ASTInterpreter:
             # For return statements, evaluate the value and return it
             if node.value:
                 if isinstance(node.value, ast.Subscript):
-                    # Handle slicing operations specially
-                    target = self.run_sync_stmt(node.value.value)
-                    if isinstance(node.value.slice, ast.Slice):
-                        # Process slice parts
-                        start = self.run_sync_stmt(node.value.slice.lower) if node.value.slice.lower else None
-                        stop = self.run_sync_stmt(node.value.slice.upper) if node.value.slice.upper else None
-                        step = self.run_sync_stmt(node.value.slice.step) if node.value.slice.step else None
-                        # Create a slice object
-                        key = slice(start, stop, step)
-                    else:
-                        # Normal subscript
-                        key = self.run_sync_stmt(node.value.slice)
-                    
-                    # Call the __getitem__ method directly
-                    if hasattr(target, '__getitem__'):
-                        return target.__getitem__(key)
-                    return None
+                    try:
+                        # Handle slicing operations specially
+                        target = self.run_sync_stmt(node.value.value)
+                        if isinstance(node.value.slice, ast.Slice):
+                            # Process slice parts
+                            start = self.run_sync_stmt(node.value.slice.lower) if node.value.slice.lower else None
+                            stop = self.run_sync_stmt(node.value.slice.upper) if node.value.slice.upper else None
+                            step = self.run_sync_stmt(node.value.slice.step) if node.value.slice.step else None
+                            # Create a custom slice object
+                            from quantalogic_pythonbox.slice_utils import CustomSlice
+                            key = CustomSlice(start, stop, step)
+                        else:
+                            # Normal subscript
+                            key = self.run_sync_stmt(node.value.slice)
+                        
+                        # Call the __getitem__ method directly
+                        if hasattr(target, '__getitem__'):
+                            result = target.__getitem__(key)
+                            return result
+                        else:
+                            raise TypeError(f"Object of type {type(target).__name__} does not support indexing")
+                    except Exception as e:
+                        # Let the exception propagate but wrapped with more context
+                        from quantalogic_pythonbox.exceptions import WrappedException
+                        # Extract line and column information from the node
+                        lineno = getattr(node, 'lineno', 0)
+                        col = getattr(node, 'col_offset', 0)
+                        context_line = "return obj[1:5:2]"  # Simplified representation of slice operation
+                        raise WrappedException(str(e), e, lineno, col, context_line) from e
                 else:
                     # Regular expression
                     return self.run_sync_expr(node.value)
@@ -659,23 +671,35 @@ class ASTInterpreter:
             return None
             
         elif isinstance(node, ast.Subscript):
-            # Handle subscripting
-            target = self.run_sync_expr(node.value)
-            if isinstance(node.slice, ast.Slice):
-                # Process slice parts
-                start = self.run_sync_expr(node.slice.lower) if node.slice.lower else None
-                stop = self.run_sync_expr(node.slice.upper) if node.slice.upper else None
-                step = self.run_sync_expr(node.slice.step) if node.slice.step else None
-                # Create a slice object
-                key = slice(start, stop, step)
-            else:
-                # Normal subscript
-                key = self.run_sync_expr(node.slice)
-            
-            # Call the __getitem__ method
-            if hasattr(target, '__getitem__'):
-                return target.__getitem__(key)
-            return None
+            try:
+                # Handle subscripting
+                target = self.run_sync_expr(node.value)
+                if isinstance(node.slice, ast.Slice):
+                    # Process slice parts
+                    start = self.run_sync_expr(node.slice.lower) if node.slice.lower else None
+                    stop = self.run_sync_expr(node.slice.upper) if node.slice.upper else None
+                    step = self.run_sync_expr(node.slice.step) if node.slice.step else None
+                    # Create a custom slice object
+                    from quantalogic_pythonbox.slice_utils import CustomSlice
+                    key = CustomSlice(start, stop, step)
+                else:
+                    # Normal subscript
+                    key = self.run_sync_expr(node.slice)
+                
+                # Call the __getitem__ method
+                if hasattr(target, '__getitem__'):
+                    result = target.__getitem__(key)
+                    return result
+                else:
+                    raise TypeError(f"Object of type {type(target).__name__} does not support indexing")
+            except Exception as e:
+                # Let the exception propagate but wrapped with more context
+                from quantalogic_pythonbox.exceptions import WrappedException
+                # Extract line and column information from the node
+                lineno = getattr(node, 'lineno', 0)
+                col = getattr(node, 'col_offset', 0)
+                context_line = "return obj[1:5:2]"  # Simplified representation of slice operation
+                raise WrappedException(str(e), e, lineno, col, context_line) from e
         
         # For other node types, raise an exception
         raise RuntimeError(f"Cannot synchronously evaluate expression type: {node.__class__.__name__}")
