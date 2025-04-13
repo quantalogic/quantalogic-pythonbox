@@ -125,38 +125,18 @@ async def visit_Call(self: ASTInterpreter, node: ast.Call, is_await_context: boo
     if func is list and len(evaluated_args) == 1 and hasattr(evaluated_args[0], '__aiter__'):
         return [val async for val in evaluated_args[0]]
 
-    # Special handling for built-in functions that use key functions (like sorted)
+    # Special handling for sorted() in async contexts
     if func is sorted:
-        # If there's a key function and a 'key' kwarg, handle possible coroutines
+        # Check if we're in an async context and need to use our async-aware sorted
         if 'key' in kwargs and callable(kwargs['key']):
-            orig_key = kwargs['key']
+            # Import our async_sorted function
+            from .async_builtins import async_sorted
             
-            # Create a wrapper that awaits coroutine results
-            async def async_key_wrapper(item):
-                result = orig_key(item)
-                if asyncio.iscoroutine(result):
-                    return await result
-                return result
-                
-            # Create a sync wrapper that runs the async function in the current event loop
-            def sync_key_wrapper(item):
-                result = orig_key(item)
-                if asyncio.iscoroutine(result):
-                    try:
-                        loop = asyncio.get_event_loop()
-                        return loop.run_until_complete(result)
-                    except RuntimeError:
-                        # We're already in an event loop, create a new one
-                        new_loop = asyncio.new_event_loop()
-                        try:
-                            asyncio.set_event_loop(new_loop)
-                            return new_loop.run_until_complete(result)
-                        finally:
-                            new_loop.close()
-                return result
-                
-            # Replace the original key function with our wrapper
-            kwargs['key'] = sync_key_wrapper
+            # Use our async-aware version which can handle coroutines properly
+            result = await async_sorted(evaluated_args[0] if evaluated_args else [], 
+                                     key=kwargs.get('key'), 
+                                     reverse=kwargs.get('reverse', False))
+            return result
     
     if func in (range, list, dict, set, tuple, frozenset, sorted):
         return func(*evaluated_args, **kwargs)
