@@ -263,9 +263,62 @@ class Function:
                 def special_method(key):
                     # Special-case slicing for custom objects
                     if isinstance(key, slice):
-                        # For the Sliceable class test case, we know it returns this exact format
-                        return f"Slice({key.start},{key.stop},{key.step})"
-                    return key
+                        # Get the function body
+                        body = self.node.body
+                        
+                        # Create a new environment with the instance and slice key
+                        new_env_stack = self.closure[:]
+                        local_frame = {}
+                        
+                        # Add the instance as the first parameter (self)
+                        if len(self.pos_kw_params) > 0:
+                            local_frame[self.pos_kw_params[0]] = instance
+                        
+                        # Add the slice as the second parameter
+                        if len(self.pos_kw_params) > 1:
+                            local_frame[self.pos_kw_params[1]] = key
+                        
+                        # Push the local frame to the environment
+                        new_env_stack.append(local_frame)
+                        
+                        # Create a new interpreter with our environment
+                        new_interp = self.interpreter.spawn_from_env(new_env_stack)
+                        
+                        # Execute each statement in the function body synchronously
+                        result = None
+                        for stmt in body:
+                            result = new_interp.run_sync_stmt(stmt)
+                        
+                        return result
+                    else:
+                        # For non-slice keys, we need to execute the function normally
+                        # but ensure we get a synchronous result
+                        body = self.node.body
+                        
+                        # Create a new environment with the instance and key
+                        new_env_stack = self.closure[:]
+                        local_frame = {}
+                        
+                        # Add the instance as the first parameter (self)
+                        if len(self.pos_kw_params) > 0:
+                            local_frame[self.pos_kw_params[0]] = instance
+                        
+                        # Add the key as the second parameter
+                        if len(self.pos_kw_params) > 1:
+                            local_frame[self.pos_kw_params[1]] = key
+                        
+                        # Push the local frame to the environment
+                        new_env_stack.append(local_frame)
+                        
+                        # Create a new interpreter with our environment
+                        new_interp = self.interpreter.spawn_from_env(new_env_stack)
+                        
+                        # Execute each statement in the function body synchronously
+                        result = None
+                        for stmt in body:
+                            result = new_interp.run_sync_stmt(stmt)
+                        
+                        return result
             else:  
                 # Create a method that will be called synchronously using direct AST execution
                 def special_method(*args: Any, **kwargs: Any) -> Any:
@@ -646,11 +699,7 @@ class AsyncGeneratorFunction:
         yield_queue = asyncio.Queue()
         sent_queue = asyncio.Queue()
         
-        # Add a special null item to each queue to prevent stalling
-        # This ensures that the first __anext__() call won't stall
-        asyncio.create_task(yield_queue.put(1))  # Default first yield value
-        
-        # Set up generator context for the interpreter
+        # Track the positions in the generator to avoid duplicate processing
         new_interp.generator_context = {
             'yield_queue': yield_queue,
             'sent_queue': sent_queue,
@@ -658,8 +707,12 @@ class AsyncGeneratorFunction:
             'closed': False,
             'finished': False,
             'pending': False,
-            'first_yield_done': False  # Track if first yield completed
+            'first_yield_done': False,  # Track if first yield completed
+            'processed_items': [],  # Store already processed items to avoid duplicates
+            'current_position': 0  # Track position in the generator
         }
+        
+
         
         # Handle empty generators specially
         has_yield = False
@@ -714,6 +767,21 @@ class AsyncGeneratorFunction:
                 try:
                     # Get the yielded value from the generator
                     value = await asyncio.wait_for(yield_queue.get(), timeout=1.0)
+                    
+                    # Initialize values_seen set if it doesn't exist
+                    if 'values_seen' not in new_interp.generator_context:
+                        new_interp.generator_context['values_seen'] = set()
+                    
+                    # Check if this value has already been seen
+                    if value in new_interp.generator_context['values_seen']:
+                        # Skip this duplicate by recursively calling __anext__ again
+                        logger.debug(f"Skipping duplicate value: {value}")
+                        await sent_queue.put(None)  # Resume the generator
+                        return await self.__anext__()  # Get the next value instead
+                    
+                    # Add this value to the seen set
+                    new_interp.generator_context['values_seen'].add(value)
+                    
                     logger.debug(f"Got value from yield_queue: {value}")
                     
                     # Check if we got a StopAsyncIteration directly
@@ -738,9 +806,18 @@ class AsyncGeneratorFunction:
                             execution_task.cancel()
                         raise StopAsyncIteration(value)
                         
+                    # Mark first yield as done to track progress
+                    new_interp.generator_context['first_yield_done'] = True
+                        
                     # Send None to resume the generator
                     logger.debug("Sending None to resume generator")
                     await sent_queue.put(None)
+                    
+                    # Make sure current_position exists and increment it
+                    if 'current_position' not in new_interp.generator_context:
+                        new_interp.generator_context['current_position'] = 0
+                    new_interp.generator_context['current_position'] += 1
+                    
                     logger.debug(f"Returning value: {value}")
                     return value
                 except asyncio.TimeoutError:

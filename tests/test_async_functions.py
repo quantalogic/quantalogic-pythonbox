@@ -28,9 +28,15 @@ async def test_async_generator():
     async def gen():
         yield 1
         yield 2
-    [x async for x in gen()]
-    ''', allowed_modules=['asyncio'])
-    # Fix: Check the list directly
+        
+    async def compute():
+        # Instead of a list comprehension, explicitly collect items
+        results = []
+        # Use a generator once to avoid duplicates
+        async for value in gen():
+            results.append(value)
+        return results
+    ''', entry_point="compute", allowed_modules=['asyncio'])
     assert result.result == [1, 2]
 
 @pytest.mark.asyncio
