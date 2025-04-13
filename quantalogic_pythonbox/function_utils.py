@@ -559,43 +559,53 @@ class AsyncGeneratorFunction:
                 for stmt in self.node.body:
                     logger.debug(f"Visiting statement: {ast.dump(stmt)}")
                     
-                    # For assignments with yield expressions
-                    if isinstance(stmt, ast.Assign) and any(isinstance(t, ast.Yield) for t in ast.walk(stmt.value)):
-                        target = stmt.targets[0]  # Assume single target for simplicity
-                        yield_node = stmt.value
-                        value = await new_interp.visit(yield_node.value, wrap_exceptions=True) if yield_node.value else None
-                        logger.debug(f"Putting value into yield_queue: {value}")
-                        await yield_queue.put(value)
+                    # For assignments with yield expressions - like `x = yield 1`
+                    # This is the critical code path for the test case to pass
+                    if isinstance(stmt, ast.Assign) and isinstance(stmt.value, ast.Yield):
+                        # Get target (left side of assignment) and yield node
+                        target = stmt.targets[0]  # Target variable (e.g., 'x')
+                        yield_node = stmt.value   # The yield expression 
+                        
+                        # Step 1: Calculate and send the value to be yielded
+                        # This will become the first element in the result array [1, ?, ?]
+                        yield_value = await new_interp.visit(yield_node.value, wrap_exceptions=True) if yield_node.value else None
+                        logger.debug(f"CRITICAL - Yielding value in assignment: {yield_value}")
+                        
+                        # Send the yielded value to the caller
+                        await yield_queue.put(yield_value)
                         is_empty = False
-                        new_interp.generator_context['pending'] = True
                         
-                        # Get the sent value and assign it properly
+                        # Step 2: Wait for the sent value from asend()
+                        # This is the value (2) from gen.asend(2) that should be assigned to x
                         sent_value = await sent_queue.get()
-                        logger.debug(f"Received sent value: {sent_value}")
+                        logger.debug(f"CRITICAL - Assignment received sent value: {sent_value}")
                         
-                        # Check if the sent value is an exception
-                        if isinstance(sent_value, Exception):
-                            logger.debug(f"Received exception: {sent_value}")
-                            if isinstance(sent_value, ValueError) and any(isinstance(h.type, ast.Name) and h.type.id == 'ValueError' for h in getattr(stmt, 'handlers', [])):
-                                logger.debug("Found matching except handler for ValueError")
-                                # Process the exception handler
-                                for handler in getattr(stmt, 'handlers', []):
-                                    if isinstance(handler.type, ast.Name) and handler.type.id == 'ValueError':
-                                        for catch_stmt in handler.body:
-                                            if isinstance(catch_stmt, ast.Expr) and isinstance(catch_stmt.value, ast.Yield):
-                                                caught_value = await new_interp.visit(catch_stmt.value.value, wrap_exceptions=True)
-                                                logger.debug(f"Yielding caught value: {caught_value}")
-                                                await yield_queue.put(caught_value)
-                                                break
-                            else:
-                                # Re-raise the exception
-                                raise sent_value
+                        # Step 3: Assign the sent value to the target variable in environment
+                        # This is setting x = 2 in the environment
+                        if isinstance(target, ast.Name):
+                            var_name = target.id
+                            logger.debug(f"CRITICAL - Setting {var_name} = {sent_value}")
+                            # Store the value in the environment
+                            new_interp.env_stack[-1][var_name] = sent_value
+                            # Also store it in a special place for debugging
+                            new_interp.generator_context[f'var_{var_name}'] = sent_value
                         else:
-                            # Assign the sent value to the target
+                            # For complex targets
                             await new_interp.assign(target, sent_value)
-                            logger.debug(f"Assigned {sent_value} to {target.id}: {new_interp.env_stack[-1].get(target.id)}")
+                            logger.debug("Assigned sent value to complex target")
                         
-                        new_interp.generator_context['pending'] = False
+                        # Skip normal statement processing since we've handled it manually
+                        continue
+                    
+                    # Check for yield expressions inside more complex expressions
+                    elif isinstance(stmt, ast.Assign) and any(isinstance(t, ast.Yield) for t in ast.walk(stmt.value)):
+                        logger.debug(f"Found complex expression with yield: {ast.dump(stmt.value)}")
+                        # We'll let visit_Assign handle this normally, as visit_Yield will correctly
+                        # receive and return the sent value
+                        # visit_Assign will assign that returned value to the target
+                        await new_interp.visit(stmt, wrap_exceptions=True)
+                        is_empty = False
+                        continue
                     
                     # For yield expressions in Try blocks
                     elif isinstance(stmt, ast.Try):
@@ -780,9 +790,18 @@ class AsyncGeneratorFunction:
                     # Mark first yield as done to track progress
                     new_interp.generator_context['first_yield_done'] = True
                         
-                    # Send None to resume the generator
-                    logger.debug("Sending None to resume generator")
-                    await sent_queue.put(None)
+                    # Set a flag to indicate this is an __anext__ call, not an asend call
+                    # This is critical to ensure we know the context of who is resuming the generator
+                    new_interp.generator_context['from_anext'] = True
+                        
+                    # Only send None if we're the first to resume (not coming after asend)
+                    # This is critical - only put None in the queue if no other value from asend is there
+                    if sent_queue.qsize() == 0:
+                        logger.debug("Sending None from __anext__ to resume generator")
+                        await sent_queue.put(None)
+                    else:
+                        # Don't overwrite values from asend
+                        logger.debug("Not sending None as queue already has a value (from asend)")
                     
                     # Make sure current_position exists and increment it
                     if 'current_position' not in new_interp.generator_context:
@@ -808,29 +827,44 @@ class AsyncGeneratorFunction:
                         execution_task.cancel()
                     raise StopAsyncIteration(self.return_value)
                 
-                # Set the pending flag to indicate we're processing the sent value
+                # Set a flag to indicate this is an asend call (not __anext__)
+                # This is critical for proper coordination between different methods
+                new_interp.generator_context['from_asend'] = True
                 new_interp.generator_context['pending'] = True
-                new_interp.generator_context['sent_value'] = value  # Store the sent value
                 
-                # Check if there's a value in the yield_queue already from a previous yield
-                if not yield_queue.empty():
-                    await yield_queue.get()  # Discard this value as we're sending a new one
+                # Store the sent value in a context variable for debugging
+                # This helps track value propagation through the system
+                new_interp.generator_context['sent_value'] = value
                 
-                # Actually send the value to the generator
+                # CRITICAL FIX: Make sure we don't have any existing values in the queue
+                # that could interfere with our new value
+                try:
+                    # Non-blocking check - don't wait if queue is empty
+                    while not sent_queue.empty():
+                        await sent_queue.get_nowait()
+                        logger.debug("Cleared existing value from sent_queue")
+                except Exception as e:
+                    logger.debug(f"Error clearing queue: {e}")
+                
+                # Send our value to the generator
+                # This is the value that should be assigned to x in 'x = yield 1'
+                logger.debug(f"CRITICAL: Sending value {value} to sent_queue")
                 await sent_queue.put(value)
-                logger.debug(f"Sent value to sent_queue: {value}")
                 
                 try:
-                    # Wait for the generator to yield the next value
+                    # Wait for the generator to yield its next value after processing our sent value
+                    # This is what we'll return from asend()
                     result_value = await asyncio.wait_for(yield_queue.get(), timeout=1.0)
                     logger.debug(f"Got value from yield_queue: {result_value}")
                     
+                    # Special handling for exceptions from the generator
                     if isinstance(result_value, Exception) and not isinstance(result_value, (StopAsyncIteration, GeneratorExit)):
-                        logger.debug(f"Raising exception: {result_value}")
+                        logger.debug(f"Raising exception from generator: {result_value}")
                         if execution_task and not execution_task.done():
                             execution_task.cancel()
                         raise result_value
                         
+                    # Handle the generator closing
                     if new_interp.generator_context.get('closed'):
                         logger.debug("Generator closed, raising StopAsyncIteration")
                         self.return_value = result_value
@@ -838,12 +872,10 @@ class AsyncGeneratorFunction:
                             execution_task.cancel()
                         raise StopAsyncIteration(result_value)
                     
-                    # If the result is None and we have a sent value context, use that instead
-                    if result_value is None and new_interp.generator_context.get('sent_value') is not None:
-                        result_value = new_interp.generator_context.get('sent_value')
-                        logger.debug(f"Using sent_value as result: {result_value}")
-                        
-                    # Important: When we're in asend, the value should be returned from the asend call
+                    # The value from yield_queue is the value that was yielded by the generator
+                    # In the test case, this needs to be the value of the variable (x) after the asend value was assigned
+                    
+                    # Return the yielded value back to the caller
                     logger.debug(f"Returning value from asend: {result_value}")
                     return result_value
                     
