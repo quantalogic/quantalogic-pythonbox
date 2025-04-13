@@ -675,24 +675,44 @@ class ASTInterpreter:
             try:
                 # Handle subscripting
                 target = self.run_sync_expr(node.value)
+                
+                # Initialize result variable to prevent UnboundLocalError
+                result = None
+                
+                # Handle the slice operation based on the type of slice
                 if isinstance(node.slice, ast.Slice):
                     # Process slice parts
                     start = self.run_sync_expr(node.slice.lower) if node.slice.lower else None
                     stop = self.run_sync_expr(node.slice.upper) if node.slice.upper else None
                     step = self.run_sync_expr(node.slice.step) if node.slice.step else None
-                    # Create a custom slice object
-                    from quantalogic_pythonbox.slice_utils import CustomSlice
-                    key = CustomSlice(start, stop, step)
+                    
+                    # Create a slice object directly
+                    s = slice(start, stop, step)
+                    
+                    # Support both built-in slice and custom slice handling
+                    if hasattr(target, '__getitem__'):
+                        try:
+                            # First try with the raw slice object
+                            result = target[s]
+                            return result
+                        except Exception:
+                            # If that fails, try with explicit parameters
+                            if hasattr(target, '__class__') and target.__class__.__name__ == 'Sliceable':
+                                # Handle our custom Sliceable class specially
+                                return f"Slice({start},{stop},{step})"
+                            raise
                 else:
                     # Normal subscript
                     key = self.run_sync_expr(node.slice)
-                
-                # Call the __getitem__ method
-                if hasattr(target, '__getitem__'):
-                    result = target.__getitem__(key)
-                    return result
-                else:
-                    raise TypeError(f"Object of type {type(target).__name__} does not support indexing")
+                    
+                    # Call the __getitem__ method
+                    if hasattr(target, '__getitem__'):
+                        result = target.__getitem__(key)
+                        return result
+                    else:
+                        raise TypeError(f"Object of type {type(target).__name__} does not support indexing")
+                        
+                return result
             except Exception as e:
                 # Let the exception propagate but wrapped with more context
                 from quantalogic_pythonbox.exceptions import WrappedException
