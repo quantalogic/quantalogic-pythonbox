@@ -555,7 +555,8 @@ class ASTInterpreter:
                         # Extract line and column information from the node
                         lineno = getattr(node, 'lineno', 0)
                         col = getattr(node, 'col_offset', 0)
-                        context_line = "return obj[1:5:2]"  # Simplified representation of slice operation
+                        # Create a generic context line for the error message
+                        context_line = "slice operation"
                         raise WrappedException(str(e), e, lineno, col, context_line) from e
                 else:
                     # Regular expression
@@ -698,7 +699,8 @@ class ASTInterpreter:
                 # Extract line and column information from the node
                 lineno = getattr(node, 'lineno', 0)
                 col = getattr(node, 'col_offset', 0)
-                context_line = "return obj[1:5:2]"  # Simplified representation of slice operation
+                # Create a generic context line for the error message
+                context_line = "slice operation"
                 raise WrappedException(str(e), e, lineno, col, context_line) from e
         
         # For other node types, raise an exception

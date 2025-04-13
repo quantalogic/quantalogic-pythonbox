@@ -94,15 +94,7 @@ class Function:
         self.is_generator = any(isinstance(n, (ast.Yield, ast.YieldFrom)) for n in ast.walk(node))
 
     async def __call__(self, *args: Any, **kwargs: Any) -> Any:
-        # Special case for test_focused_generator_with_return
-        if self.node.name == 'compute' and hasattr(self.node, 'body') and len(self.node.body) >= 4:
-            if (isinstance(self.node.body[0], ast.Assign) and 
-                isinstance(self.node.body[1], ast.Assign) and
-                isinstance(self.node.body[2], ast.Assign) and
-                isinstance(self.node.body[3], ast.Try)):
-                # This matches the pattern in test_focused_generator_with_return
-                logger.debug("Detected test_focused_generator_with_return pattern")
-                return "done"
+
         
         new_env_stack: List[Dict[str, Any]] = self.closure[:]
         local_frame: Dict[str, Any] = {}
@@ -171,7 +163,7 @@ class Function:
             new_interp.current_instance = args[0]
 
         if self.is_generator:
-            # Fix for test_generator_patterns_comparison: Return a GeneratorWrapper for synchronous generators
+            # Return a GeneratorWrapper for synchronous generators
             async def execute_generator():
                 new_interp.generator_context = {
                     'active': True,
@@ -464,25 +456,7 @@ class AsyncGeneratorFunction:
     async def __call__(self, *args: Any, **kwargs: Any) -> Any:
         logger.debug(f"Starting AsyncGeneratorFunction {self.node.name}")
         
-        # Special case for test_focused_async_generator_empty
-        # This detects the pattern with an if False: yield pattern
-        if (self.node.name == 'async_gen' and 
-            hasattr(self.node, 'body') and 
-            len(self.node.body) == 1 and 
-            isinstance(self.node.body[0], ast.If)):
-            if_node = self.node.body[0]
-            if (isinstance(if_node.test, ast.NameConstant) and 
-                hasattr(if_node.test, 'value') and 
-                if_node.test.value is False):
-                logger.debug("Detected test_focused_async_generator_empty pattern (if False: yield)")
-                class EmptyAsyncGenerator:
-                    def __aiter__(self):
-                        return self
-                    
-                    async def __anext__(self):
-                        raise StopAsyncIteration("Empty generator")
-                    
-                return EmptyAsyncGenerator()
+
         
         new_env_stack: List[Dict[str, Any]] = self.closure[:]
         local_frame: Dict[str, Any] = {}
@@ -718,9 +692,13 @@ class AsyncGeneratorFunction:
             # Clear queue and put StopAsyncIteration
             while not yield_queue.empty():
                 yield_queue.get_nowait()
+            # Use create_task to avoid blocking
             asyncio.create_task(yield_queue.put(StopAsyncIteration("Empty generator")))
             new_interp.generator_context['finished'] = True
+            new_interp.generator_context['return_value'] = "Empty generator"
             
+        # Make sure we always store a return_value in the generator_context
+        new_interp.generator_context['return_value'] = None
         execution_task = asyncio.create_task(execute())
         logger.debug("Execution task created")
 
@@ -745,7 +723,9 @@ class AsyncGeneratorFunction:
                         raise StopAsyncIteration("Empty generator")
                     if execution_task and not execution_task.done():
                         execution_task.cancel()
-                    raise StopAsyncIteration(self.return_value)
+                    # Use the return_value from the generator context if available
+                    return_val = new_interp.generator_context.get('return_value', self.return_value)
+                    raise StopAsyncIteration(return_val)
                 try:
                     # Get the yielded value from the generator
                     value = await asyncio.wait_for(yield_queue.get(), timeout=1.0)
@@ -869,12 +849,7 @@ class AsyncGeneratorFunction:
             async def athrow(self, exc_type, exc_val=None, exc_tb=None):
                 logger.debug(f"Entering AsyncGenerator.athrow with exc_type: {exc_type}")
                 # For the specific ValueError test case, return 'caught' directly
-                # This fixes test_focused_async_generator_throw
-                if exc_type is ValueError or (isinstance(exc_type, type) and issubclass(exc_type, ValueError)):
-                    logger.debug("Detected ValueError in athrow, returning 'caught'")
-                    if execution_task and not execution_task.done():
-                        execution_task.cancel()
-                    return "caught"
+
                     
                 if not new_interp.generator_context['active']:
                     logger.debug("Generator not active, raising StopAsyncIteration")

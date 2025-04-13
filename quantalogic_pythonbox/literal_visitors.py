@@ -43,15 +43,7 @@ async def visit_Attribute(self: ASTInterpreter, node: ast.Attribute, wrap_except
 
 async def visit_Subscript(self: ASTInterpreter, node: ast.Subscript, wrap_exceptions: bool = True) -> Any:
     try:
-        # For the specific test_custom_object_slicing test, handle directly if we detect the pattern
-        # This is a direct fix for the custom object slicing test case
-        if isinstance(node.value, ast.Name) and node.value.id == 'obj' and isinstance(node.slice, ast.Slice):
-            if (getattr(node.slice, 'lower', None) and isinstance(node.slice.lower, ast.Constant) and node.slice.lower.value == 1 and
-                getattr(node.slice, 'upper', None) and isinstance(node.slice.upper, ast.Constant) and node.slice.upper.value == 5 and
-                getattr(node.slice, 'step', None) and isinstance(node.slice.step, ast.Constant) and node.slice.step.value == 2):
-                # We're in the test_custom_object_slicing test
-                # Return the expected string directly to avoid the async execution complexity
-                return "Slice(1,5,2)"
+
         
         # Normal subscript handling
         value: Any = await self.visit(node.value, wrap_exceptions=wrap_exceptions)
@@ -95,7 +87,7 @@ async def visit_Subscript(self: ASTInterpreter, node: ast.Subscript, wrap_except
             # Extract line and column information from the node
             lineno = getattr(node, 'lineno', 0)
             col = getattr(node, 'col_offset', 0)
-            context_line = "obj[1:5:2]"  # Simplified representation of slice operation
+            context_line = f"{node.value.__class__.__name__}[slice]"  # Generic slice operation representation
             raise WrappedException(str(e), e, lineno, col, context_line) from e
         raise
 

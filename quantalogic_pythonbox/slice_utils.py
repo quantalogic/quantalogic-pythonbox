@@ -6,7 +6,6 @@ class CustomSlice:
     """
     A custom implementation of Python's slice object that formats its string representation
     as 'Slice(start,stop,step)' without spaces after commas and with capital 'S'.
-    This matches the expected format in the test_custom_object_slicing test.
     """
     
     def __init__(self, start, stop, step):
