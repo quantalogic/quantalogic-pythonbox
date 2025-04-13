@@ -1,4 +1,5 @@
 import ast
+import asyncio  # Added import for coroutine checking
 from typing import Any, Dict, List, Tuple
 
 from .interpreter_core import ASTInterpreter
@@ -43,7 +44,10 @@ async def visit_Attribute(self: ASTInterpreter, node: ast.Attribute, wrap_except
 async def visit_Subscript(self: ASTInterpreter, node: ast.Subscript, wrap_exceptions: bool = True) -> Any:
     value: Any = await self.visit(node.value, wrap_exceptions=wrap_exceptions)
     slice_val: Any = await self.visit(node.slice, wrap_exceptions=wrap_exceptions)
-    return value[slice_val]
+    result = value[slice_val]
+    if asyncio.iscoroutine(result):
+        result = await result
+    return result
 
 async def visit_Slice(self: ASTInterpreter, node: ast.Slice, wrap_exceptions: bool = True) -> slice:
     lower: Any = await self.visit(node.lower, wrap_exceptions=wrap_exceptions) if node.lower else None

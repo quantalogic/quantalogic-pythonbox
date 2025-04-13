@@ -169,7 +169,7 @@ async def visit_GeneratorExp(self: ASTInterpreter, node: ast.GeneratorExp, wrap_
 
         await rec(0)
         self.env_stack.pop()
-        return result
+        return result  # Explicitly return the list to ensure iterability
     else:
         # Existing async generator logic
         base_frame = self.env_stack[-1].copy()

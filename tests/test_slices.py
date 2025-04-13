@@ -153,7 +153,8 @@ async def main():
     assert result.result == "Middle chunk: [30, 40, 50, 60]"
 
 @pytest.mark.asyncio
-async def test_complex_object_arrays():
+async def test_complex_object_arrays_with_async_list():
+    """Test complex object arrays with explicit async list conversion"""
     code = '''
 async def create_users() -> list:
     return [
@@ -170,7 +171,8 @@ async def filter_admins(users: list) -> list:
 async def main():
     users = await create_users()
     admins = await filter_admins(users)
-    return f"Found {len(admins)} admin(s): {', '.join(user['name'] for user in admins) if admins else 'none'}"
+    admin_names = [user['name'] for user in admins]
+    return f"Found {len(admins)} admin(s): {', '.join(admin_names) if admins else 'none'}"
 '''
     result = await execute_async(
         code,
@@ -178,6 +180,33 @@ async def main():
         namespace={}
     )
     assert result.result == "Found 1 admin(s): Alice"
+
+@pytest.mark.asyncio
+async def test_nested_array_operations_with_async_list():
+    """Test nested array operations with explicit async list conversion"""
+    code = '''
+async def get_users() -> list:
+    return [
+        {"id": 1, "name": "Alice", "roles": ["admin", "user"]},
+        {"id": 2, "name": "Bob", "roles": ["user"]},
+        {"id": 3, "name": "Charlie", "roles": ["editor", "user", "reviewer"]}
+    ]
+
+async def count_total_roles(users: list) -> int:
+    roles = [len(user['roles']) for user in users]
+    return sum(roles)
+
+async def main():
+    users = await get_users()
+    total_roles = await count_total_roles(users)
+    return f"Total roles: {total_roles}"
+'''
+    result = await execute_async(
+        code,
+        entry_point='main',
+        namespace={}
+    )
+    assert result.result == "Total roles: 6"
 
 @pytest.mark.asyncio
 async def test_array_mapping_operations():
@@ -204,15 +233,19 @@ async def main():
 @pytest.mark.asyncio
 async def test_nested_array_operations():
     code = '''
-async def count_total_roles(users: list) -> int:
-    return sum(len(user['roles']) for user in users)
-
-async def main():
-    users = [
+async def get_users() -> list:
+    return [
         {"id": 1, "name": "Alice", "roles": ["admin", "user"]},
         {"id": 2, "name": "Bob", "roles": ["user"]},
         {"id": 3, "name": "Charlie", "roles": ["editor", "user", "reviewer"]}
     ]
+
+async def count_total_roles(users: list) -> int:
+    roles = [len(user['roles']) for user in users]
+    return sum(roles)
+
+async def main():
+    users = await get_users()
     total_roles = await count_total_roles(users)
     return f"Total roles: {total_roles}"
 '''
@@ -385,3 +418,189 @@ async def test_nested_async_operations():
     
     result = await outer()
     assert result == [1, 4, 9]
+
+@pytest.mark.asyncio
+async def test_debug_async_generator_iteration_with_error_handling():
+    """Test async generator iteration with error handling"""
+    async def gen_users():
+        users = [
+            {'name': 'Alice', 'roles': ['admin'], 'active': True},
+            {'name': 'Bob', 'roles': ['user'], 'active': False},
+            {'name': 'Charlie', 'roles': ['user', 'editor'], 'active': True}
+        ]
+        for user in users:
+            yield user
+    
+    # Test iteration with try/except
+    users = []
+    try:
+        async for user in gen_users():
+            users.append(user)
+    except Exception as e:
+        pytest.fail(f"Async iteration failed: {str(e)}")
+    
+    assert len(users) == 3
+    assert users[0]['name'] == 'Alice'
+
+@pytest.mark.asyncio
+async def test_debug_string_join_with_async_error_handling():
+    """Test string join with async data and error handling"""
+    async def get_names():
+        return ['Alice', 'Bob', 'Charlie']
+    
+    try:
+        names = await get_names()
+        result = ", ".join(names)
+        assert result == "Alice, Bob, Charlie"
+    except Exception as e:
+        pytest.fail(f"String join failed: {str(e)}")
+
+@pytest.mark.asyncio
+async def test_positive_slicing():
+    code = '''
+async def get_middle_three(arr: list) -> list:
+    return arr[1:4]
+
+async def main():
+    arr = ['a', 'b', 'c', 'd', 'e', 'f']
+    sliced = await get_middle_three(arr)
+    return f"Middle three: {sliced}"
+'''
+    result = await execute_async(
+        code,
+        entry_point='main',
+        namespace={}
+    )
+    assert result.result == "Middle three: ['b', 'c', 'd']"
+
+@pytest.mark.asyncio
+async def test_step_slicing():
+    code = '''
+async def get_every_second(arr: list) -> list:
+    return arr[::2]
+
+async def main():
+    arr = ['a', 'b', 'c', 'd', 'e', 'f']
+    sliced = await get_every_second(arr)
+    return f"Every second: {sliced}"
+'''
+    result = await execute_async(
+        code,
+        entry_point='main',
+        namespace={}
+    )
+    assert result.result == "Every second: ['a', 'c', 'e']"
+
+@pytest.mark.asyncio
+async def test_mixed_slicing():
+    code = '''
+async def get_mixed_slice(arr: list) -> list:
+    return arr[1:-2]
+
+async def main():
+    arr = ['a', 'b', 'c', 'd', 'e', 'f']
+    sliced = await get_mixed_slice(arr)
+    return f"Mixed slice: {sliced}"
+'''
+    result = await execute_async(
+        code,
+        entry_point='main',
+        namespace={}
+    )
+    assert result.result == "Mixed slice: ['b', 'c', 'd']"
+
+@pytest.mark.asyncio
+async def test_empty_slice():
+    code = '''
+async def get_empty_slice(arr: list) -> list:
+    return arr[10:20]
+
+async def main():
+    arr = ['a', 'b', 'c']
+    sliced = await get_empty_slice(arr)
+    return f"Empty slice: {sliced}"
+'''
+    result = await execute_async(
+        code,
+        entry_point='main',
+        namespace={}
+    )
+    assert result.result == "Empty slice: []"
+
+@pytest.mark.asyncio
+async def test_string_slicing():
+    code = '''
+async def get_string_slice(s: str) -> str:
+    return s[2:5]
+
+async def main():
+    s = "abcdefgh"
+    sliced = await get_string_slice(s)
+    return f"String slice: {sliced}"
+'''
+    result = await execute_async(
+        code,
+        entry_point='main',
+        namespace={}
+    )
+    assert result.result == "String slice: cde"
+
+@pytest.mark.asyncio
+async def test_tuple_slicing():
+    code = '''
+async def get_tuple_slice(t: tuple) -> tuple:
+    return t[1:3]
+
+async def main():
+    t = (10, 20, 30, 40, 50)
+    sliced = await get_tuple_slice(t)
+    return f"Tuple slice: {sliced}"
+'''
+    result = await execute_async(
+        code,
+        entry_point='main',
+        namespace={}
+    )
+    assert result.result == "Tuple slice: (20, 30)"
+
+@pytest.mark.asyncio
+async def test_custom_object_slicing():
+    code = '''
+class Sliceable:
+    def __getitem__(self, key):
+        if isinstance(key, slice):
+            return f"Slice({key.start},{key.stop},{key.step})"
+        return key
+
+async def get_custom_slice(obj) -> str:
+    return obj[1:5:2]
+
+async def main():
+    obj = Sliceable()
+    sliced = await get_custom_slice(obj)
+    return f"Custom slice: {sliced}"
+'''
+    result = await execute_async(
+        code,
+        entry_point='main',
+        namespace={}
+    )
+    assert result.result == "Custom slice: Slice(1,5,2)"
+
+@pytest.mark.asyncio
+async def test_omitted_indices_slicing():
+    code = '''
+async def get_full_slice(arr: list) -> list:
+    return arr[:]
+
+async def main():
+    arr = ['a', 'b', 'c']
+    sliced = await get_full_slice(arr)
+    return f"Full slice: {sliced}"
+'''
+    result = await execute_async(
+        code,
+        entry_point='main',
+        namespace={}
+    )
+    assert result.result == "Full slice: ['a', 'b', 'c']"
