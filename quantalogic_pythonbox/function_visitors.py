@@ -125,7 +125,40 @@ async def visit_Call(self: ASTInterpreter, node: ast.Call, is_await_context: boo
     if func is list and len(evaluated_args) == 1 and hasattr(evaluated_args[0], '__aiter__'):
         return [val async for val in evaluated_args[0]]
 
-    if func in (range, list, dict, set, tuple, frozenset):
+    # Special handling for built-in functions that use key functions (like sorted)
+    if func is sorted:
+        # If there's a key function and a 'key' kwarg, handle possible coroutines
+        if 'key' in kwargs and callable(kwargs['key']):
+            orig_key = kwargs['key']
+            
+            # Create a wrapper that awaits coroutine results
+            async def async_key_wrapper(item):
+                result = orig_key(item)
+                if asyncio.iscoroutine(result):
+                    return await result
+                return result
+                
+            # Create a sync wrapper that runs the async function in the current event loop
+            def sync_key_wrapper(item):
+                result = orig_key(item)
+                if asyncio.iscoroutine(result):
+                    try:
+                        loop = asyncio.get_event_loop()
+                        return loop.run_until_complete(result)
+                    except RuntimeError:
+                        # We're already in an event loop, create a new one
+                        new_loop = asyncio.new_event_loop()
+                        try:
+                            asyncio.set_event_loop(new_loop)
+                            return new_loop.run_until_complete(result)
+                        finally:
+                            new_loop.close()
+                return result
+                
+            # Replace the original key function with our wrapper
+            kwargs['key'] = sync_key_wrapper
+    
+    if func in (range, list, dict, set, tuple, frozenset, sorted):
         return func(*evaluated_args, **kwargs)
 
     if inspect.isclass(func):
@@ -189,7 +222,38 @@ async def visit_Lambda(self: ASTInterpreter, node: ast.Lambda, wrap_exceptions: 
         node, closure, self, pos_kw_params, vararg_name, kwonly_params, kwarg_name, pos_defaults, kw_defaults
     )
     
-    async def lambda_wrapper(*args, **kwargs):
-        return await lambda_func(*args, **kwargs)
+    # Create a wrapper that can work in both sync and async contexts
+    def lambda_wrapper(*args, **kwargs):
+        # Create a coroutine from the lambda function
+        coro = lambda_func(*args, **kwargs)
+        
+        # If this is not a coroutine, just return the result directly
+        if not asyncio.iscoroutine(coro):
+            return coro
+            
+        # Try to run the coroutine in the current event loop if we're in a sync context
+        try:
+            # First try to use the interpreter's loop if available
+            if hasattr(self, 'loop') and self.loop:
+                try:
+                    return self.loop.run_until_complete(coro)
+                except RuntimeError:
+                    # We're already in this loop's context, create a task instead
+                    pass
+                    
+            # Try to get the current event loop
+            loop = asyncio.get_event_loop()
+            try:
+                # If we can run_until_complete, we're in a synchronous context
+                return loop.run_until_complete(coro)
+            except RuntimeError:
+                # We're already in an async context
+                pass
+                
+            # If we got here, we're in an async context where we can't run_until_complete
+            return coro
+        except Exception:
+            # In case of any error, just return the coroutine and let the caller handle it
+            return coro
     
     return lambda_wrapper

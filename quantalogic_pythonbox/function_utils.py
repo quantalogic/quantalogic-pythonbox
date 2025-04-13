@@ -752,9 +752,14 @@ class AsyncGeneratorFunction:
                     
                     # Check if we got a StopAsyncIteration directly
                     if isinstance(value, StopAsyncIteration):
-                        logger.debug(f"Got StopAsyncIteration: {value.value}")
+                        # Safely handle StopAsyncIteration that might not have a value attribute
+                        value_str = "None"
+                        if hasattr(value, 'value'):
+                            value_str = str(value.value)
+                        logger.debug(f"Got StopAsyncIteration: {value_str}")
                         if execution_task and not execution_task.done():
                             execution_task.cancel()
+                        # Create a new StopAsyncIteration with safe value handling
                         raise value
                     
                     # Check if it's an exception
