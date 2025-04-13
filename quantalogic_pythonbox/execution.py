@@ -118,7 +118,7 @@ async def execute_async(
         
         await event_loop_manager.run_task(run_execution(), timeout=timeout)
         
-        if entry_point:
+        if entry_point:                
             func = interpreter.env_stack[0].get(entry_point)
             if not func:
                 raise NameError(f"Function '{entry_point}' not found in the code")
@@ -157,21 +157,20 @@ async def execute_async(
                         gen = await func(*args, **kwargs)  # Get the generator object
                         
                         # Handle generator with return - for the test case checking returns from generators
-                        # This is the pattern in test_focused_generator_with_return
-                        if entry_point == "compute" and hasattr(gen, "__next__"):
+                        # Handle any generator function - try to collect values and capture return value
+                        if hasattr(gen, "__next__"):
+                            # Collect values from the generator, but also capture any return value
+                            values = []
                             try:
-                                # These next() calls are necessary to progress the generator
-                                # even though the variables aren't used directly
-                                # They match the pattern in test_focused_generator_with_return
-                                _ = next(gen)  # Get first value
-                                _ = next(gen)  # Get second value
-                                try:
-                                    # Try to get a third item (this should raise StopIteration with the return value)
-                                    _ = next(gen)
-                                    result = "unexpected"
-                                except StopIteration as e:
-                                    # Return the value attribute from StopIteration
-                                    result = str(e.value) if hasattr(e, 'value') else None
+                                while True:
+                                    values.append(next(gen))
+                            except StopIteration as e:
+                                # If the generator has a return value, use it directly
+                                if hasattr(e, 'value') and e.value is not None:
+                                    result = e.value
+                                else:
+                                    # Otherwise, return the collected values
+                                    result = values
                                 local_vars = {}
                                 return AsyncExecutionResult(
                                     result=result,
@@ -179,12 +178,7 @@ async def execute_async(
                                     execution_time=time.time() - start_time,
                                     local_variables=local_vars
                                 )
-                            except Exception:
-                                pass  # Fall back to normal collection if this specific pattern doesn't work
-                            
-                        # Normal generator collection
-                        result = [val for val in gen]  # Collect synchronously for sync generators
-                        local_vars = {}
+                        # This code should never be reached since all generators are handled above
                     except Exception as ex:
                         # Check if this is from a StopIteration with value
                         if isinstance(ex, StopIteration) and hasattr(ex, 'value'):
