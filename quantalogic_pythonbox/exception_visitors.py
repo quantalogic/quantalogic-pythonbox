@@ -12,6 +12,28 @@ async def visit_Try(self: ASTInterpreter, node: ast.Try, wrap_exceptions: bool =
             result = await self.visit(stmt, wrap_exceptions=False)
     except ReturnException as ret:
         raise ret
+    except StopIteration as e:
+        # Special handling for StopIteration to properly capture generator return values
+        self.current_exception = e  # Store the current exception
+        handled = False
+        for handler in node.handlers:
+            exc_type = await self._resolve_exception_type(handler.type)
+            if (exc_type is None) or (exc_type and exc_type is StopIteration):
+                if handler.name:
+                    # Make sure the exception with its .value attribute is properly stored
+                    self.set_variable(handler.name, e)
+                handler_result = None
+                try:
+                    for stmt in handler.body:
+                        handler_result = await self.visit(stmt, wrap_exceptions=True)
+                except ReturnException as ret:
+                    raise ret
+                if handler_result is not None:
+                    result = handler_result
+                handled = True
+                break
+        if not handled:
+            raise
     except Exception as e:
         self.current_exception = e  # Fix: Store the current exception
         original_e = e.original_exception if isinstance(e, WrappedException) else e
