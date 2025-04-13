@@ -461,6 +461,224 @@ class ASTInterpreter:
                 return await result
             return result
         raise TypeError(f"Object {func} is not callable")
+        
+    def sync_call(self, func, instance, *args, **kwargs):
+        """Synchronously execute an async function.
+        
+        This method is specifically designed for special methods like __getitem__ that
+        may be called in contexts where awaiting is not possible (like slicing operations).
+        It creates a new event loop in a separate thread to avoid the 'cannot run event loop 
+        while another is running' error.
+        
+        Args:
+            func: The function object to execute
+            instance: The instance to bind the function to
+            *args: Arguments to pass to the function
+            **kwargs: Keyword arguments to pass to the function
+            
+        Returns:
+            The result of the function call
+        """
+        # Create a separate thread to run a new event loop
+        result_container = []
+        error_container = []
+        
+        def thread_runner():
+            try:
+                # Create a new loop for this thread
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    # Run the coroutine in this thread's event loop
+                    coro = func(instance, *args, **kwargs)
+                    result = loop.run_until_complete(coro)
+                    result_container.append(result)
+                finally:
+                    loop.close()
+            except Exception as e:
+                error_container.append(e)
+        
+        # Start and wait for the thread to complete
+        thread = threading.Thread(target=thread_runner)
+        thread.start()
+        thread.join()
+        
+        # Check for errors and return the result
+        if error_container:
+            raise error_container[0]
+        if result_container:
+            return result_container[0]
+        return None
+        
+    def run_sync_stmt(self, node: ast.AST) -> Any:
+        """Execute a single AST statement synchronously.
+        
+        This is specifically designed for special methods like __getitem__
+        that need to execute synchronously but are used in contexts where
+        async/await might not be available.
+        
+        Args:
+            node: The AST node to execute
+            
+        Returns:
+            The result of executing the node
+        """
+        # Handle specific node types that we know will work in sync mode
+        if isinstance(node, ast.Return):
+            # For return statements, evaluate the value and return it
+            if node.value:
+                if isinstance(node.value, ast.Subscript):
+                    # Handle slicing operations specially
+                    target = self.run_sync_stmt(node.value.value)
+                    if isinstance(node.value.slice, ast.Slice):
+                        # Process slice parts
+                        start = self.run_sync_stmt(node.value.slice.lower) if node.value.slice.lower else None
+                        stop = self.run_sync_stmt(node.value.slice.upper) if node.value.slice.upper else None
+                        step = self.run_sync_stmt(node.value.slice.step) if node.value.slice.step else None
+                        # Create a slice object
+                        key = slice(start, stop, step)
+                    else:
+                        # Normal subscript
+                        key = self.run_sync_stmt(node.value.slice)
+                    
+                    # Call the __getitem__ method directly
+                    if hasattr(target, '__getitem__'):
+                        return target.__getitem__(key)
+                    return None
+                else:
+                    # Regular expression
+                    return self.run_sync_expr(node.value)
+            return None
+        elif isinstance(node, ast.Expr):
+            # Expression statement
+            return self.run_sync_expr(node.value)
+        elif isinstance(node, ast.If):
+            # If statement
+            test_result = self.run_sync_expr(node.test)
+            if test_result:
+                for stmt in node.body:
+                    result = self.run_sync_stmt(stmt)
+                return result
+            else:
+                for stmt in node.orelse:
+                    result = self.run_sync_stmt(stmt)
+                return result
+        
+        # For other node types, raise an exception
+        raise RuntimeError(f"Cannot synchronously execute node type: {node.__class__.__name__}")
+    
+    def run_sync_expr(self, node: ast.AST) -> Any:
+        """Execute a single AST expression synchronously.
+        
+        Args:
+            node: The AST expression node to execute
+            
+        Returns:
+            The result of evaluating the expression
+        """
+        if isinstance(node, ast.Name):
+            # Variable reference
+            return self.get_variable(node.id)
+        elif isinstance(node, ast.Constant):
+            # Literal value
+            return node.value
+        elif isinstance(node, ast.BinOp):
+            # Binary operation
+            left = self.run_sync_expr(node.left)
+            right = self.run_sync_expr(node.right)
+            
+            # Handle operations
+            if isinstance(node.op, ast.Add):
+                return left + right
+            elif isinstance(node.op, ast.Sub):
+                return left - right
+            elif isinstance(node.op, ast.Mult):
+                return left * right
+            elif isinstance(node.op, ast.Div):
+                return left / right
+            # Add other operations as needed
+            
+        elif isinstance(node, ast.Call):
+            # Function call
+            func = self.run_sync_expr(node.func)
+            args = [self.run_sync_expr(arg) for arg in node.args]
+            kwargs = {kw.arg: self.run_sync_expr(kw.value) for kw in node.keywords}
+            
+            # Handle direct function calls
+            if callable(func):
+                return func(*args, **kwargs)
+            return None
+        
+        elif isinstance(node, ast.JoinedStr):
+            # Handle f-strings
+            parts = []
+            for value in node.values:
+                if isinstance(value, ast.Constant):
+                    parts.append(str(value.value))
+                elif isinstance(value, ast.FormattedValue):
+                    # Evaluate the expression inside the f-string
+                    expr_value = self.run_sync_expr(value.value)
+                    # Format it according to the conversion and format_spec if provided
+                    if value.conversion != -1:
+                        if value.conversion == 's':  # str
+                            expr_value = str(expr_value)
+                        elif value.conversion == 'r':  # repr
+                            expr_value = repr(expr_value)
+                        elif value.conversion == 'a':  # ascii
+                            expr_value = ascii(expr_value)
+                    
+                    # Apply format specifier if any
+                    if value.format_spec is not None:
+                        format_spec = self.run_sync_expr(value.format_spec)
+                        expr_value = format(expr_value, format_spec)
+                    
+                    parts.append(str(expr_value))
+            return ''.join(parts)
+        
+        elif isinstance(node, ast.FormattedValue):
+            # Handle individual formatted values
+            expr_value = self.run_sync_expr(node.value)
+            # Apply conversions and formatting
+            if node.conversion != -1:
+                if node.conversion == 's':  # str
+                    expr_value = str(expr_value)
+                elif node.conversion == 'r':  # repr
+                    expr_value = repr(expr_value)
+                elif node.conversion == 'a':  # ascii
+                    expr_value = ascii(expr_value)
+            return expr_value
+        
+        elif isinstance(node, ast.Attribute):
+            # Handle attribute access (obj.attr)
+            value = self.run_sync_expr(node.value)  # Get the object
+            attr = node.attr  # Get the attribute name
+            
+            # Safely get the attribute
+            if hasattr(value, attr):
+                return getattr(value, attr)
+            return None
+            
+        elif isinstance(node, ast.Subscript):
+            # Handle subscripting
+            target = self.run_sync_expr(node.value)
+            if isinstance(node.slice, ast.Slice):
+                # Process slice parts
+                start = self.run_sync_expr(node.slice.lower) if node.slice.lower else None
+                stop = self.run_sync_expr(node.slice.upper) if node.slice.upper else None
+                step = self.run_sync_expr(node.slice.step) if node.slice.step else None
+                # Create a slice object
+                key = slice(start, stop, step)
+            else:
+                # Normal subscript
+                key = self.run_sync_expr(node.slice)
+            
+            # Call the __getitem__ method
+            if hasattr(target, '__getitem__'):
+                return target.__getitem__(key)
+            return None
+        
+        # For other node types, raise an exception
+        raise RuntimeError(f"Cannot synchronously evaluate expression type: {node.__class__.__name__}")
 
 
 class AsyncFunction:
