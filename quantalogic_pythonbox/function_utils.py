@@ -29,7 +29,6 @@ class GeneratorWrapper:
             # Make sure to capture the return value from the generator
             if hasattr(e, 'value'):
                 self.return_value = e.value
-                # This is critical - we must preserve the return value in StopIteration
                 logger.debug(f"Capturing generator return value: {e.value}")
             raise StopIteration(self.return_value)
 
@@ -410,7 +409,7 @@ class AsyncFunction:
 
         missing_args = [param for param in self.posonly_params if param not in local_frame]
         missing_args += [param for param in self.pos_kw_params if param not in local_frame and param not in self.pos_defaults]
-        missing_args += [param for param in self.kwonly_params if param not in local_frame and param in self.kw_defaults]
+        missing_args += [param for param in self.kwonly_params if param not in local_frame and param not in self.kw_defaults]
         if missing_args:
             raise TypeError(f"Async function '{self.node.name}' missing required arguments: {', '.join(missing_args)}")
 
@@ -458,8 +457,6 @@ class AsyncGeneratorFunction:
 
     async def __call__(self, *args: Any, **kwargs: Any) -> Any:
         logger.debug(f"Starting AsyncGeneratorFunction {self.node.name}")
-        
-
         
         new_env_stack: List[Dict[str, Any]] = self.closure[:]
         local_frame: Dict[str, Any] = {}
@@ -531,127 +528,9 @@ class AsyncGeneratorFunction:
         async def execute():
             logger.debug(f"Starting execution of {self.node.name}")
             try:
-                # Check if the generator is empty or if all yields are unreachable
-                is_empty = True
-                
-                # Run through the function body to see if any yields are actually reachable
-                try:
-                    for stmt in self.node.body:
-                        await new_interp.visit(stmt, wrap_exceptions=True)
-                        # If we reach a yield, the generator is not empty
-                        if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Yield):
-                            is_empty = False
-                            break
-                except Exception as e:
-                    logger.debug(f"Exception during empty check: {e}")
-                    # Any exception during this initial check doesn't matter, we're just checking
-                
-                # If no yields were reached, mark as empty
-                if is_empty:
-                    logger.debug("Empty generator detected (no reachable yields)")
-                    # Put a special marker in the yield queue to signal empty generator
-                    await yield_queue.put(StopAsyncIteration("Empty generator"))
-                    new_interp.generator_context['finished'] = True
-                    return
-                
-                # Track if this is an empty generator
-                is_empty = True
                 for stmt in self.node.body:
                     logger.debug(f"Visiting statement: {ast.dump(stmt)}")
-                    
-                    # For assignments with yield expressions - like `x = yield 1`
-                    # This is the critical code path for the test case to pass
-                    if isinstance(stmt, ast.Assign) and isinstance(stmt.value, ast.Yield):
-                        # Get target (left side of assignment) and yield node
-                        target = stmt.targets[0]  # Target variable (e.g., 'x')
-                        yield_node = stmt.value   # The yield expression 
-                        
-                        # Step 1: Calculate and send the value to be yielded
-                        # This will become the first element in the result array [1, ?, ?]
-                        yield_value = await new_interp.visit(yield_node.value, wrap_exceptions=True) if yield_node.value else None
-                        logger.debug(f"CRITICAL - Yielding value in assignment: {yield_value}")
-                        
-                        # Send the yielded value to the caller
-                        await yield_queue.put(yield_value)
-                        is_empty = False
-                        
-                        # Step 2: Wait for the sent value from asend()
-                        # This is the value (2) from gen.asend(2) that should be assigned to x
-                        sent_value = await sent_queue.get()
-                        logger.debug(f"CRITICAL - Assignment received sent value: {sent_value}")
-                        
-                        # Step 3: Assign the sent value to the target variable in environment
-                        # This is setting x = 2 in the environment
-                        if isinstance(target, ast.Name):
-                            var_name = target.id
-                            logger.debug(f"CRITICAL - Setting {var_name} = {sent_value}")
-                            # Store the value in the environment
-                            new_interp.env_stack[-1][var_name] = sent_value
-                            # Also store it in a special place for debugging
-                            new_interp.generator_context[f'var_{var_name}'] = sent_value
-                        else:
-                            # For complex targets
-                            await new_interp.assign(target, sent_value)
-                            logger.debug("Assigned sent value to complex target")
-                        
-                        # Skip normal statement processing since we've handled it manually
-                        continue
-                    
-                    # Check for yield expressions inside more complex expressions
-                    elif isinstance(stmt, ast.Assign) and any(isinstance(t, ast.Yield) for t in ast.walk(stmt.value)):
-                        logger.debug(f"Found complex expression with yield: {ast.dump(stmt.value)}")
-                        # We'll let visit_Assign handle this normally, as visit_Yield will correctly
-                        # receive and return the sent value
-                        # visit_Assign will assign that returned value to the target
-                        await new_interp.visit(stmt, wrap_exceptions=True)
-                        is_empty = False
-                        continue
-                    
-                    # For yield expressions in Try blocks
-                    elif isinstance(stmt, ast.Try):
-                        # Handle try-except blocks with yield
-                        for body_stmt in stmt.body:
-                            if isinstance(body_stmt, ast.Expr) and isinstance(body_stmt.value, ast.Yield):
-                                value = await new_interp.visit(body_stmt.value.value, wrap_exceptions=True) if body_stmt.value.value else None
-                                logger.debug(f"Putting value into yield_queue from try block: {value}")
-                                await yield_queue.put(value)
-                                is_empty = False
-                                new_interp.generator_context['pending'] = True
-                                
-                                # Get the sent value
-                                sent_value = await sent_queue.get()
-                                logger.debug(f"Received sent value in try block: {sent_value}")
-                                
-                                # If it's an exception, handle it with the except handlers
-                                if isinstance(sent_value, Exception):
-                                    logger.debug(f"Handling exception in try block: {sent_value}")
-                                    for handler in stmt.handlers:
-                                        if (isinstance(handler.type, ast.Name) and 
-                                            ((handler.type.id == 'ValueError' and isinstance(sent_value, ValueError)) or
-                                             (handler.type.id == 'Exception'))):
-                                            logger.debug(f"Found matching handler: {handler.type.id}")
-                                            for except_stmt in handler.body:
-                                                if isinstance(except_stmt, ast.Expr) and isinstance(except_stmt.value, ast.Yield):
-                                                    caught_value = await new_interp.visit(except_stmt.value.value, wrap_exceptions=True)
-                                                    logger.debug(f"Yielding caught value from handler: {caught_value}")
-                                                    await yield_queue.put(caught_value)
-                                                    break
-                                            break
-                                    new_interp.generator_context['pending'] = False
-                                else:
-                                    # Normal flow - continue execution
-                                    new_interp.generator_context['pending'] = False
-                                    continue
-                    
-                    else:
-                        await new_interp.visit(stmt, wrap_exceptions=True)
-                        
-                # Handle empty generators by raising StopAsyncIteration directly
-                if is_empty:
-                    logger.debug("Empty generator detected")
-                    # Signal that this is an empty generator
-                    new_interp.generator_context['finished'] = True
-                
+                    await new_interp.visit(stmt, wrap_exceptions=True)
             except ReturnException as ret:
                 logger.debug(f"Caught ReturnException with value: {ret.value}")
                 if ret.value is not None:
@@ -681,8 +560,6 @@ class AsyncGeneratorFunction:
             'processed_items': [],  # Store already processed items to avoid duplicates
             'current_position': 0  # Track position in the generator
         }
-        
-
         
         # Handle empty generators specially
         has_yield = False
