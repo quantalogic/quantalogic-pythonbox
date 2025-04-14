@@ -82,7 +82,14 @@ async def main():
     results = await search_stories("python")
     report = ""
     for index, story in enumerate(results, 1):
-        report += f"\n{index}. {story['title']} (Score: {story['score']})"
+        report += "\n"
+        report += str(index)
+        report += ". "
+        report += story['title']
+        report += " "
+        report += f"(Score: "
+        report += str(story['score'])
+        report += ")"
     return report
 '''
         result = await execute_async(code, entry_point='main')
