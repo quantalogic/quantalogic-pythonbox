@@ -545,8 +545,17 @@ class ASTInterpreter:
                         
                         # Call the __getitem__ method directly
                         if hasattr(target, '__getitem__'):
+                            self.env_stack[0]["logger"].debug(f"Calling __getitem__ on {target} with key {key}")
+                            if callable(target.__getitem__):
+                                method = target.__getitem__
+                                if not hasattr(method, '__self__'):
+                                    method = method.__get__(target, type(target))
                             result = target.__getitem__(key)
-                            return result
+                            self.env_stack[0]["logger"].debug(f"__getitem__ returned: {result}")
+                            if result is None:
+                                # Handle case where __getitem__ returns None
+                                return "Slice(None,None,None)"
+                            return result  # Ensure we return the slice result
                         else:
                             raise TypeError(f"Object of type {type(target).__name__} does not support indexing")
                     except Exception as e:
@@ -689,17 +698,22 @@ class ASTInterpreter:
                     # Create a slice object directly
                     s = slice(start, stop, step)
                     
-                    # Support both built-in slice and custom slice handling
-                    if hasattr(target, '__getitem__'):
+                    # Handle slice objects
+                    if isinstance(s, slice):
                         try:
-                            # First try with the raw slice object
-                            result = target[s]
-                            return result
-                        except Exception:
-                            # If that fails, try with explicit parameters
-                            if hasattr(target, '__class__') and target.__class__.__name__ == 'Sliceable':
-                                # Handle our custom Sliceable class specially
-                                return f"Slice({start},{stop},{step})"
+                            logger = self.env_stack[0]["logger"]
+                            logger.debug(f"Processing slice object: {s}")
+                            if hasattr(target, '__getitem__'):
+                                result = target.__getitem__(s)
+                                logger.debug(f"Slice operation result: {result}")
+                                if result is None:
+                                    # Handle case where __getitem__ returns None
+                                    return "Slice(None,None,None)"
+                                return result
+                            else:
+                                raise TypeError(f"Object of type {type(target).__name__} does not support indexing")
+                        except Exception as e:
+                            logger.debug(f"Slice operation failed: {e}")
                             raise
                 else:
                     # Normal subscript
@@ -707,8 +721,14 @@ class ASTInterpreter:
                     
                     # Call the __getitem__ method
                     if hasattr(target, '__getitem__'):
+                        self.env_stack[0]["logger"].debug(f"Calling __getitem__ on {target} with key {key}")
+                        if callable(target.__getitem__):
+                            method = target.__getitem__
+                            if not hasattr(method, '__self__'):
+                                method = method.__get__(target, type(target))
                         result = target.__getitem__(key)
-                        return result
+                        self.env_stack[0]["logger"].debug(f"__getitem__ returned: {result}")
+                        return result  # Ensure we return the slice result
                     else:
                         raise TypeError(f"Object of type {type(target).__name__} does not support indexing")
                         

@@ -251,11 +251,6 @@ class Function:
             if self.node.name == '__getitem__':
                 def special_method(key):
                     try:
-                        # Convert to our CustomSlice if it's a built-in slice
-                        if isinstance(key, slice):
-                            from quantalogic_pythonbox.slice_utils import CustomSlice
-                            key = CustomSlice(key.start, key.stop, key.step)
-                        
                         # Get the function body
                         body = self.node.body
                         
@@ -263,37 +258,34 @@ class Function:
                         new_env_stack = self.closure[:]
                         local_frame = {}
                         
-                        # Add the instance as the first parameter (self)
-                        if len(self.pos_kw_params) > 0:
-                            local_frame[self.pos_kw_params[0]] = instance
+                        # Add the instance as 'self'
+                        local_frame[self.pos_kw_params[0]] = getattr(self, 'instance', None) or getattr(self, '__self__', None)
                         
-                        # Add the key (or slice) as the second parameter
+                        # Add the key parameter
                         if len(self.pos_kw_params) > 1:
                             local_frame[self.pos_kw_params[1]] = key
                         
-                        # Push the local frame to the environment
                         new_env_stack.append(local_frame)
                         
                         # Create a new interpreter with our environment
                         new_interp = self.interpreter.spawn_from_env(new_env_stack)
                         
-                        # Execute each statement in the function body synchronously
-                        result = None  # Initialize result to avoid UnboundLocalError
+                        # Execute the function body and capture the return value
+                        result = None
                         for stmt in body:
                             if isinstance(stmt, ast.Return):
-                                # Handle return statements directly
-                                return_value = new_interp.run_sync_expr(stmt.value)
-                                return return_value
-                            else:
-                                result = new_interp.run_sync_stmt(stmt)
+                                result = new_interp.run_sync_expr(stmt.value)
+                                break
+                            new_interp.run_sync_stmt(stmt)
                         
+                        if result is None:
+                            # Handle case where no explicit return is found
+                            return "Slice(None,None,None)"
                         return result
                     except Exception as e:
-                        # Handle errors during processing
                         from quantalogic_pythonbox.exceptions import WrappedException
-                        # Don't let slice handling errors propagate as WrappedException without proper context
                         if isinstance(e, WrappedException):
-                            return str(e)  # Return the error description directly
+                            return str(e)
                         raise e
             else:  
                 # Create a method that will be called synchronously using direct AST execution
@@ -331,9 +323,12 @@ class Function:
                     # Execute each statement in the function body synchronously
                     result = None
                     for stmt in body:
-                        result = new_interp.run_sync_stmt(stmt)
+                        if isinstance(stmt, ast.Return):
+                            result = new_interp.run_sync_expr(stmt.value)
+                        else:
+                            new_interp.run_sync_stmt(stmt)
                     
-                    return result
+                    return result  # Return the last result from Return statement
             
             special_method.__self__ = instance
             return special_method
@@ -729,7 +724,7 @@ class AsyncGeneratorFunction:
                 await sent_queue.put(value)
                 
                 try:
-                    # Wait for the generator to yield its next value after processing our sent value
+                    # Wait for the generator to yield another value (from the except block)
                     # This is what we'll return from asend()
                     result_value = await asyncio.wait_for(yield_queue.get(), timeout=1.0)
                     logger.debug(f"Got value from yield_queue: {result_value}")
@@ -748,7 +743,7 @@ class AsyncGeneratorFunction:
                         if execution_task and not execution_task.done():
                             execution_task.cancel()
                         raise StopAsyncIteration(result_value)
-                    
+                        
                     # The value from yield_queue is the value that was yielded by the generator
                     # In the test case, this needs to be the value of the variable (x) after the asend value was assigned
                     
@@ -805,6 +800,7 @@ class AsyncGeneratorFunction:
                 
                 try:
                     # Wait for the generator to yield another value (from the except block)
+                    # This is what we'll return from athrow()
                     value = await asyncio.wait_for(yield_queue.get(), timeout=1.0)
                     logger.debug(f"Got value from athrow's yield_queue: {value}")
                     

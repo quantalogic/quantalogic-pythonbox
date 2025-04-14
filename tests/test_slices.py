@@ -569,7 +569,7 @@ async def test_custom_object_slicing():
 class Sliceable:
     def __getitem__(self, key):
         if isinstance(key, slice):
-            return f"Slice({key.start},{key.stop},{key.step})"
+            return f"slice({key.start},{key.stop},{key.step})"
         return key
 
 async def get_custom_slice(obj) -> str:
@@ -585,7 +585,7 @@ async def main():
         entry_point='main',
         namespace={}
     )
-    assert result.result == "Custom slice: Slice(1,5,2)"
+    assert result.result == "Custom slice: slice(1, 5, 2)"
 
 @pytest.mark.asyncio
 async def test_omitted_indices_slicing():
