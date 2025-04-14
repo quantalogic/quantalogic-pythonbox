@@ -83,49 +83,50 @@ async def test_async_sort_with_lambda():
 
 @pytest.mark.asyncio
 async def test_async_hn_processing():
-    result = await execute_async('''
-    import asyncio
+    result = await execute_async(r'''
+import asyncio
+
+class HNItem:
+    def __init__(self, title, url, score):
+        self.title = title
+        self.url = url
+        self.score = score
+
+async def get_hn_items(item_type, num_items):
+    # Mock data for testing
+    mock_items = [
+        HNItem("AI Breakthrough", "https://example.com/ai", 250),
+        HNItem("Python 4.0 Released", "https://example.com/python", 180),
+        HNItem("Quantum Computing", "https://example.com/quantum", 300)
+    ]
+    await asyncio.sleep(0.01)
+    return mock_items[:num_items]
+
+async def main():
+    step1_item_type = "top"
+    step1_num_items = 3
+    step1_hn_items = await get_hn_items(item_type=step1_item_type, num_items=step1_num_items)
     
-    class HNItem:
-        def __init__(self, title, url, score):
-            self.title = title
-            self.url = url
-            self.score = score
+    # Sort items by score in descending order
+    step1_sorted_items = sorted(step1_hn_items, key=lambda item: item.score, reverse=True)[:step1_num_items]
     
-    async def get_hn_items(item_type, num_items):
-        # Mock data for testing
-        mock_items = [
-            HNItem("AI Breakthrough", "https://example.com/ai", 250),
-            HNItem("Python 4.0 Released", "https://example.com/python", 180),
-            HNItem("Quantum Computing", "https://example.com/quantum", 300)
-        ]
-        await asyncio.sleep(0.01)
-        return mock_items[:num_items]
+    # Create a markdown report
+    step1_markdown_report = "# Top Hacker News Articles\n\n"
+    for item in step1_sorted_items:
+        step1_markdown_report += f"## [{item.title}]({item.url})\n"
+        step1_markdown_report += f"Score: {item.score}\n\n"
     
-    async def main():
-        step1_item_type = "top"
-        step1_num_items = 3
-        step1_hn_items = await get_hn_items(item_type=step1_item_type, num_items=step1_num_items)
-        
-        # Sort items by score in descending order
-        step1_sorted_items = sorted(step1_hn_items, key=lambda item: item.score, reverse=True)[:step1_num_items]
-        
-        # Create a markdown report
-        step1_markdown_report = "# Top Hacker News Articles\n\n"
-        for item in step1_sorted_items:
-            step1_markdown_report += f"## [{item.title}]({item.url})\n"
-            step1_markdown_report += f"Score: {item.score}\n\n"
-        
-        return step1_markdown_report
-    
-    await main()
-    ''', allowed_modules=['asyncio'])
+    return step1_markdown_report
+
+await main()
+''', allowed_modules=['asyncio'])
     
     # Debug output if the test fails
     if result.error:
         print(f"Error: {result.error}")
     
     # Check if the report contains expected content
+    assert result.result is not None, "Result should not be None"
     assert "# Top Hacker News Articles" in result.result
     assert "Quantum Computing" in result.result
     assert "Score: 300" in result.result
