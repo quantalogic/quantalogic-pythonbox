@@ -102,6 +102,7 @@ async def execute_async(
         
         safe_namespace = namespace.copy() if namespace else {}
         safe_namespace.pop('asyncio', None)
+        safe_namespace['logging'] = logging  # Make logging module available in executed code
         
         interpreter = ASTInterpreter(
             allowed_modules=allowed_modules,
@@ -323,6 +324,7 @@ def interpret_ast(ast_tree: ast.AST, allowed_modules: List[str], source: str = "
     
     safe_namespace = namespace.copy() if namespace else {}
     safe_namespace.pop('asyncio', None)
+    safe_namespace['logging'] = logging  # Make logging module available in executed code
     
     interpreter = ASTInterpreter(allowed_modules=allowed_modules, source=source, restrict_os=restrict_os, namespace=safe_namespace)
     
