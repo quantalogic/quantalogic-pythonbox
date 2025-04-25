@@ -138,6 +138,27 @@ async def visit_Call(self: ASTInterpreter, node: ast.Call, is_await_context: boo
                                      reverse=kwargs.get('reverse', False))
             return result
     
+    # Special handling for list.sort with async key functions
+    if isinstance(node.func, ast.Attribute) and node.func.attr == "sort" and hasattr(func, "__self__") and isinstance(func.__self__, list):
+        lst = func.__self__
+        # Pop key and reverse parameters
+        keyfunc = kwargs.pop("key", None)
+        reverse = kwargs.pop("reverse", False)
+        # Fallback to default sort if no valid async key function
+        if not callable(keyfunc):
+            return func(*evaluated_args, **kwargs)
+        # Build list of (computed key, item)
+        new_pairs = []
+        for item in lst:
+            key_val = keyfunc(item)
+            if asyncio.iscoroutine(key_val):
+                key_val = await key_val
+            new_pairs.append((key_val, item))
+        # Sort pairs and update list in-place
+        new_pairs.sort(key=lambda pair: pair[0], reverse=reverse)
+        lst[:] = [item for _, item in new_pairs]
+        return None
+
     if func in (range, list, dict, set, tuple, frozenset, sorted):
         return func(*evaluated_args, **kwargs)
 
