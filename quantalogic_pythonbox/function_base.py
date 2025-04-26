@@ -190,7 +190,8 @@ class Function:
         if self.node.name in ['__getitem__', '__setitem__', '__delitem__', '__contains__']:
             # For __getitem__ special method, handle it directly
             if self.node.name == '__getitem__':
-                def special_method(key):
+                async def special_method(key):
+                    logger.debug(f"Entering special_method for key: {key}, type: {type(key)}")
                     try:
                         # Get the function body
                         body = self.node.body
@@ -214,13 +215,17 @@ class Function:
                         # Execute the function body synchronously and capture the return value
                         result = None
                         for stmt in body:
-                            result = new_interp.run_sync_stmt(stmt)
-                            if result is not None:
-                                return result
-                        
-                        if result is None:
-                            logger.debug(f"No return value from {self.node.name}, returning default")
-                            return None
+                            try:
+                                exec_result = await new_interp.run_sync_stmt(stmt)
+                                logger.debug(f"Executed statement in __getitem__: {type(stmt).__name__} at line {getattr(stmt, 'lineno', 'unknown')}, result: {exec_result}")
+                            except ReturnException as re:
+                                return re.value
+                            except Exception as e:
+                                logger.error(f"Exception in statement execution for {type(stmt).__name__}: {str(e)}")
+                                raise
+                            if exec_result is not None:
+                                result = exec_result
+                        logger.debug(f"__getitem__ returning: {result}, type: {type(result)}")
                         return result
                     except Exception as e:
                         logger.error(f"Error in {self.node.name}: {str(e)}")
@@ -231,7 +236,8 @@ class Function:
                         raise WrappedException(str(e), e, lineno, col, context_line) from e
             else:  
                 # Create a method that will be called synchronously using direct AST execution
-                def special_method(*args: Any, **kwargs: Any) -> Any:
+                async def special_method(*args: Any, **kwargs: Any) -> Any:
+                    logger.debug(f"Entering special_method for {self.node.name}")
                     # Get the function body
                     body = self.node.body
                     
@@ -264,12 +270,19 @@ class Function:
                     # Execute each statement in the function body synchronously
                     result = None
                     for stmt in body:
-                        result = new_interp.run_sync_stmt(stmt)
-                        if result is not None:
-                            break
-                    
+                        try:
+                            exec_result = await new_interp.run_sync_stmt(stmt)
+                            logger.debug(f"Executed statement in special_method: {exec_result}")
+                            if isinstance(exec_result, ReturnException):
+                                return exec_result.value
+                            elif exec_result is not None:
+                                result = exec_result
+                                break
+                        except Exception as e:
+                            logger.error(f"Exception in statement execution: {str(e)}")
+                            raise
+                    logger.debug(f"special_method returning: {result}")
                     return result
-                
             special_method.__self__ = instance
             return special_method
         else:

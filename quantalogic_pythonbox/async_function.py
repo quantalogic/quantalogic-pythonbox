@@ -88,11 +88,13 @@ class AsyncFunction:
         try:
             for stmt in self.node.body:
                 last_value = await new_interp.visit(stmt, wrap_exceptions=True)
+            logger.debug(f"AsyncFunction {self.node.name} completed all statements, last_value: {last_value}")
             if _return_locals:
                 local_vars = {k: v for k, v in local_frame.items() if not k.startswith('__')}
                 return last_value, local_vars
             return last_value
         except ReturnException as ret:
+            logger.debug(f"AsyncFunction {self.node.name} returning value from return exception: {ret.value}")
             if _return_locals:
                 local_vars = {k: v for k, v in local_frame.items() if not k.startswith('__')}
                 return ret.value, local_vars

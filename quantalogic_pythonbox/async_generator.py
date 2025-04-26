@@ -164,7 +164,7 @@ class AsyncGeneratorFunction:
 
         class AsyncGenerator:
             def __init__(self):
-                self.execute_gen = execute()
+                self.gen = execute()
                 self.return_value = None
                 self.result = None
                 self.yielded_values = []
@@ -174,67 +174,52 @@ class AsyncGeneratorFunction:
                 return self
 
             async def __anext__(self):
+                logger.debug("Entering __anext__ method")
                 try:
-                    value = await self.execute_gen.asend(None)
-                    self.yielded_values.append(value)
-                    return value
+                    result = await self.gen.asend(None)
+                    logger.debug(f"__anext__ yielded result: {result}, type: {type(result)}")
+                    return result
+                except StopAsyncIteration:
+                    logger.debug("__anext__ raising StopAsyncIteration")
+                    raise StopAsyncIteration from None
+                except Exception as e:
+                    logger.error(f"Exception in __anext__: {str(e)}, type: {type(e)}")
+                    raise
+
+            async def _send(self, value):
+                try:
+                    return await self.gen.asend(value)
                 except StopAsyncIteration as e:
-                    logger.debug(f"StopAsyncIteration in __anext__ with args: {e.args}")
+                    logger.debug(f"StopAsyncIteration in asend with args: {e.args}")
                     self.return_value = e.value if e.args else None
                     self.result = self.yielded_values if self.yielded_values else []
                     self.execution_finished = True
                     self.active = False
-                    # propagate original StopAsyncIteration
-                    raise e
+                    # propagate async generator completion
+                    raise StopAsyncIteration(self.result)
 
             async def asend(self, value):
-                logger.debug(f"Entering AsyncGenerator.asend with value: {value}")
-                try:
-                    value = await self.execute_gen.asend(value)
-                    logger.debug(f"Returning value from asend: {value}")
-                    self.yielded_values.append(value)
-                    return value
-                except StopAsyncIteration as e:
-                    logger.debug(f"StopAsyncIteration in asend with args: {e.args}")
-                    self.return_value = e.args[0] if e.args else None
-                    self.result = self.yielded_values if self.yielded_values else []
-                    self.execution_finished = True
-                    self.active = False
-                    # propagate async generator completion
-                    raise StopAsyncIteration(self.result)
-                except Exception as e:
-                    logger.debug(f"Exception in asend: {type(e).__name__}")
-                    raise
+                return await self._send(value)
 
-            async def athrow(self, exc_type, exc_val=None, exc_tb=None):
-                logger.debug(f"Entering AsyncGenerator.athrow with exc_type: {exc_type}")
+            async def _throw(self, typ, val=None, tb=None):
                 try:
-                    if exc_val is None:
-                        if isinstance(exc_type, type):
-                            exc_val = exc_type()
-                        else:
-                            exc_val = exc_type
-                    value = await self.execute_gen.athrow(exc_val)
-                    logger.debug(f"Returning value from athrow: {value}")
-                    self.yielded_values.append(value)
-                    return value
+                    return await self.gen.athrow(val)
                 except StopAsyncIteration as e:
                     logger.debug(f"StopAsyncIteration in athrow with args: {e.args}")
-                    self.return_value = e.args[0] if e.args else None
+                    self.return_value = e.value if e.args else None
                     self.result = self.yielded_values if self.yielded_values else []
                     self.execution_finished = True
                     self.active = False
                     # propagate async generator completion
                     raise StopAsyncIteration(self.result)
-                except Exception as e:
-                    logger.debug(f"Exception in athrow: {type(e).__name__}")
-                    self.result = "caught"
-                    raise e
+
+            async def athrow(self, typ, val=None, tb=None):
+                return await self._throw(typ, val, tb)
 
             async def aclose(self):
                 logger.debug("Entering AsyncGenerator.aclose")
                 try:
-                    await self.execute_gen.aclose()
+                    await self.gen.aclose()
                     logger.debug("Generator closed")
                 except Exception as e:
                     logger.debug(f"Exception during aclose: {e}")

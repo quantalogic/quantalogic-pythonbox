@@ -3,8 +3,7 @@ import asyncio
 import threading
 from typing import Any, Dict, List, Optional
 
-from .exceptions import WrappedException
-from .slice_utils import CustomSlice
+from .exceptions import WrappedException, ReturnException
 
 
 async def execute_function(func: Any, args: List[Any], kwargs: Dict[str, Any]):
@@ -99,36 +98,10 @@ def run_sync_stmt(interpreter, node: ast.AST) -> Any:
     """
     if isinstance(node, ast.Return):
         if node.value:
-            if isinstance(node.value, ast.Subscript):
-                try:
-                    target = run_sync_stmt(interpreter, node.value.value)
-                    if isinstance(node.value.slice, ast.Slice):
-                        start = run_sync_stmt(interpreter, node.value.slice.lower) if node.value.slice.lower else None
-                        stop = run_sync_stmt(interpreter, node.value.slice.upper) if node.value.slice.upper else None
-                        step = run_sync_stmt(interpreter, node.value.slice.step) if node.value.slice.step else None
-                        key = CustomSlice(start, stop, step)
-                    else:
-                        key = run_sync_stmt(interpreter, node.value.slice)
-                    
-                    if hasattr(target, '__getitem__'):
-                        interpreter.env_stack[0]["logger"].debug(f"Calling __getitem__ on {target} with key {key}")
-                        if callable(target.__getitem__):
-                            method = target.__getitem__
-                            if not hasattr(method, '__self__'):
-                                method = method.__get__(target, type(target))
-                        result = target.__getitem__(key)
-                        interpreter.env_stack[0]["logger"].debug(f"__getitem__ returned: {result}")
-                        return result
-                    else:
-                        raise TypeError(f"Object of type {type(target).__name__} does not support indexing")
-                except Exception as e:
-                    lineno = getattr(node, 'lineno', 0)
-                    col = getattr(node, 'col_offset', 0)
-                    context_line = "slice operation"
-                    raise WrappedException(str(e), e, lineno, col, context_line) from e
-            else:
-                return run_sync_expr(interpreter, node.value)
-        return None
+            value_result = run_sync_expr(interpreter, node.value) if node.value else None
+            raise ReturnException(value_result)
+        else:
+            raise ReturnException(None)
     elif isinstance(node, ast.Expr):
         return run_sync_expr(interpreter, node.value)
     elif isinstance(node, ast.If):

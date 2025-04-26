@@ -25,8 +25,14 @@ class ControlledEventLoop:
     async def get_loop(self) -> asyncio.AbstractEventLoop:
         async with self._lock:
             if self._loop is None:
-                self._loop = asyncio.new_event_loop()
-                self._created = True
+                try:
+                    # Prefer the current running event loop
+                    self._loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    # Create a new loop only if no running loop exists
+                    self._loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(self._loop)
+                    self._created = True
             return self._loop
 
     async def cleanup(self):
@@ -117,19 +123,30 @@ async def _async_execute_async(
                     result, local_vars = execution_result, {}
             elif isinstance(func, AsyncGeneratorFunction):
                 gen = func(*args, **kwargs)
+                logger.debug(f"Starting async generator execution for {func.__name__}")
                 values = []
                 try:
                     async for val in gen:
                         values.append(val)
-                    result = values
-                except StopAsyncIteration as e:
-                    if hasattr(e, 'value') and e.value:
-                        result = e.value
-                    else:
-                        result = values if values else "Empty generator"
-                except Exception as e:
-                    result = str(e)
+                        logger.debug(f"Async generator yielded: {val}")
+                    result = values if values else None
+                    logger.debug(f"Async generator completed with values: {result}")
+                except StopAsyncIteration:
+                    result = values if values else "Generator ended without yielding"
+                    logger.debug(f"StopAsyncIteration handled, result: {result}")
+                except Exception as exc_obj:
+                    result = str(exc_obj)
+                    logger.error(f"Exception in async generator: {str(exc_obj)}")
+                    raise
+                logger.debug(f"Final async generator result before return: {result}, type: {type(result)}")
                 local_vars = {}
+                logger.debug(f"Returning async generator result: {result}")
+                return AsyncExecutionResult(
+                    result=result,
+                    error=None,
+                    execution_time=time.time() - start_time,
+                    local_variables=local_vars
+                )
             elif isinstance(func, Function):
                 if func.is_generator:
                     try:
@@ -252,14 +269,12 @@ async def _async_execute_async(
             execution_time=time.time() - start_time,
             local_variables={}
         )
-    except Exception as e:
-        local_vars = interpreter.env_stack[-1] if interpreter is not None else {}
-        error_msg = f'{type(e).__name__}: {str(e)}'
-        if hasattr(e, 'lineno') and hasattr(e, 'col_offset'):
-            error_msg += f' at line {e.lineno}, col {e.col_offset}'
+    except Exception as exc_obj:
+        result = str(exc_obj)
+        local_vars = {}
         return AsyncExecutionResult(
-            result=None,
-            error=error_msg,
+            result=result if result is not None else "Execution failed",
+            error=str(exc_obj),
             execution_time=time.time() - start_time,
             local_variables=local_vars
         )
@@ -315,8 +330,3 @@ def interpret_ast(ast_tree: ast.AST, allowed_modules: List[str], source: str = "
     finally:
         if not loop.is_closed():
             loop.close()
-
-def interpret_code(source_code: str, allowed_modules: List[str], restrict_os: bool = False, namespace: Optional[Dict[str, Any]] = None) -> Any:
-    dedented_source = textwrap.dedent(source_code).strip()
-    tree: ast.AST = ast.parse(dedented_source)
-    return interpret_ast(tree, allowed_modules, source=dedented_source, restrict_os=restrict_os, namespace=namespace)

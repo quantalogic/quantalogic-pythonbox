@@ -1,5 +1,4 @@
 import ast
-import asyncio
 import logging
 import threading
 from typing import Any, Dict, List, Optional, Callable
@@ -595,3 +594,9 @@ class ASTInterpreter:
         if node is None:
             return Exception
         return await self.visit(node, wrap_exceptions=True)
+
+    async def run_sync_stmt(self, stmt: ast.stmt) -> Any:
+        return await self.visit(stmt, wrap_exceptions=True)
+
+    async def run_sync_expr(self, expr: ast.expr) -> Any:
+        return await self.visit(expr, wrap_exceptions=True)
