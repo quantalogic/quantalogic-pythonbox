@@ -149,6 +149,7 @@ class AsyncGeneratorFunction:
                             await new_interp.assign(stmt.targets[0], sent_value)
                         else:
                             await new_interp.visit(stmt, wrap_exceptions=True)
+                raise StopAsyncIteration  # Signal generator completion
             except ReturnException as ret:
                 logger.debug(f"Caught ReturnException with value: {ret.value}")
                 raise StopAsyncIteration(ret.value)
@@ -173,8 +174,8 @@ class AsyncGeneratorFunction:
                     logger.debug(f"Returning value from __anext__: {value}")
                     return value
                 except StopAsyncIteration as e:
-                    logger.debug(f"StopAsyncIteration in __anext__ with value: {e.value}")
-                    self.return_value = e.value
+                    logger.debug(f"StopAsyncIteration in __anext__ with args: {e.args}")
+                    self.return_value = e.args[0] if e.args else None
                     raise
 
             async def asend(self, value):
@@ -184,8 +185,8 @@ class AsyncGeneratorFunction:
                     logger.debug(f"Returning value from asend: {value}")
                     return value
                 except StopAsyncIteration as e:
-                    logger.debug(f"StopAsyncIteration in asend with value: {e.value}")
-                    self.return_value = e.value
+                    logger.debug(f"StopAsyncIteration in asend with args: {e.args}")
+                    self.return_value = e.args[0] if e.args else None
                     raise
 
             async def athrow(self, exc_type, exc_val=None, exc_tb=None):
@@ -200,8 +201,8 @@ class AsyncGeneratorFunction:
                     logger.debug(f"Returning value from athrow: {value}")
                     return value
                 except StopAsyncIteration as e:
-                    logger.debug(f"StopAsyncIteration in athrow with value: {e.value}")
-                    self.return_value = e.value
+                    logger.debug(f"StopAsyncIteration in athrow with args: {e.args}")
+                    self.return_value = e.args[0] if e.args else None
                     raise
 
             async def aclose(self):

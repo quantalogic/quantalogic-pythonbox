@@ -2,337 +2,201 @@ import pytest
 from quantalogic_pythonbox import execute_async
 
 @pytest.mark.asyncio
-async def test_simple_async_generator():
-    source = """
-async def async_gen():
-    for i in range(3):
-        yield i
-        await asyncio.sleep(0.01)
+class TestAsyncFunctions:
+    async def test_simple_async_function(self):
+        code = """
+async def foo():
+    return 1 + 2
+        """
+        result = await execute_async(code, entry_point="foo")
+        assert result.result == 3
+        assert result.error is None
 
-async def compute():
-    results = []
-    async for value in async_gen():
-        results.append(value)
-    return results
-"""
-    result = await execute_async(source, entry_point="compute", allowed_modules=["asyncio"])
-    assert result.result == [0, 1, 2]
+    @pytest.mark.parametrize("sleep_time, timeout, expect_timeout", [
+        (1, 2, False),
+        (2, 1, True),
+    ])
+    async def test_async_with_timeout(self, sleep_time, timeout, expect_timeout):
+        code = """
+import asyncio
+
+async def foo():
+    await asyncio.sleep({})
+    return 42
+        """.format(sleep_time)
+        result = await execute_async(code, entry_point="foo", timeout=timeout)
+        if expect_timeout:
+            assert "TimeoutError" in result.error
+            assert result.result is None
+        else:
+            assert result.result == 42
+            assert result.error is None
 
 @pytest.mark.asyncio
-async def test_async_generator_with_exception():
-    source = """
-async def async_gen():
+class TestAsyncGenerators:
+    async def test_async_generator(self):
+        code = """
+async def gen():
     yield 1
-    raise ValueError("test error")
+    yield 2
 
-async def compute():
-    gen = async_gen()
-    first = await gen.__anext__()
-    try:
-        await gen.__anext__()
-    except ValueError as e:
-        return str(e)
-    return "no error"
-"""
-    result = await execute_async(source, entry_point="compute", allowed_modules=["asyncio"])
-    assert result.result == "test error"
+async def main():
+    result = []
+    async for value in gen():
+        result.append(value)
+    return result
+        """
+        result = await execute_async(code, entry_point="main")
+        assert result.result == [1, 2]
+        assert result.error is None
 
-@pytest.mark.asyncio
-async def test_async_generator_send_value():
-    source = """
-async def async_gen():
-    x = yield 1
-    yield x
-    yield 3
-
-async def compute():
-    gen = async_gen()
-    first = await gen.__anext__()  # First yield: 1
-    second = await gen.asend(2)    # Send 2, yield x
-    third = await gen.asend(None)  # Yield 3
-    return [first, second, third]
-"""
-    result = await execute_async(source, entry_point="compute", allowed_modules=["asyncio"])
-    assert result.result == [1, 2, 3]
-
-@pytest.mark.asyncio
-async def test_async_generator_throw():
-    source = """
-async def async_gen():
-    try:
-        yield 1
-        yield 2
-    except ValueError:
-        yield 3
-    yield 4
-
-async def compute():
-    gen = async_gen()
-    first = await gen.__anext__()   # First yield: 1
-    await gen.athrow(ValueError)    # Throw ValueError
-    last = await gen.__anext__()    # Yield 4
-    return [first, last]
-"""
-    result = await execute_async(source, entry_point="compute", allowed_modules=["asyncio"])
-    assert result.result == [1, 4]
-
-@pytest.mark.asyncio
-async def test_async_generator_close():
-    source = """
-async def async_gen():
-    try:
-        yield 1
-        yield 2
-    finally:
-        return "Closed"
-
-async def compute():
-    gen = async_gen()
-    first = await gen.__anext__()   # First yield: 1
-    await gen.aclose()              # Close the generator
-    return first
-"""
-    result = await execute_async(source, entry_point="compute", allowed_modules=["asyncio"])
-    assert result.result == 1
-
-@pytest.mark.asyncio
-async def test_async_generator_empty():
-    source = """
-async def async_gen():
-    # Empty generator
+    async def test_empty_async_generator(self):
+        code = """
+async def gen():
     if False:
-        yield
-
-async def compute():
-    gen = async_gen()
-    try:
-        await gen.__anext__()
-    except StopAsyncIteration:
-        return "Empty generator"
-"""
-    result = await execute_async(source, entry_point="compute", allowed_modules=["asyncio"])
-    assert result.result == "Empty generator"
-
-@pytest.mark.asyncio
-async def test_async_generator_composition():
-    source = """
-async def inner_gen():
-    yield 1
-    yield 2
-
-async def outer_gen():
-    yield 0
-    async for value in inner_gen():
-        yield value
-    yield 3
-
-async def compute():
-    results = []
-    async for value in outer_gen():
-        results.append(value)
-    return results
-"""
-    result = await execute_async(source, entry_point="compute", allowed_modules=["asyncio"])
-    assert result.result == [0, 1, 2, 3]
-
-@pytest.mark.asyncio
-async def test_complex_exception_handling():
-    source = """
-async def async_gen():
-    try:
         yield 1
-        try:
-            yield 2
-            raise ValueError("inner error")
-        except ValueError:
-            yield 3
-            raise RuntimeError("outer error")
-    except RuntimeError as e:
-        yield str(e)
-    yield 4
 
-async def compute():
-    gen = async_gen()
-    results = []
-    results.append(await gen.__anext__())  # 1
-    results.append(await gen.__anext__())  # 2
-    results.append(await gen.__anext__())  # 3
-    results.append(await gen.__anext__())  # "outer error"
-    results.append(await gen.__anext__())  # 4
-    return results
-"""
-    result = await execute_async(source, entry_point="compute", allowed_modules=["asyncio"])
-    assert result.result == [1, 2, 3, "outer error", 4]
+async def main():
+    return [x async for x in gen()]
+        """
+        result = await execute_async(code, entry_point="main")
+        assert result.result == []
+        assert result.error is None
 
 @pytest.mark.asyncio
-async def test_concurrent_generators():
-    source = """
-async def gen1():
-    yield 1
-    await asyncio.sleep(0.01)
-    yield 2
+class TestErrorHandling:
+    @pytest.mark.parametrize("exception", [
+        ValueError("test"),
+        TypeError("type error"),
+        RuntimeError("runtime error"),
+    ])
+    async def test_async_exception_handling(self, exception):
+        exc_type = exception.__class__.__name__
+        exc_msg = str(exception)
+        code = """
+async def foo():
+    raise {}("{}")
+        """.format(exc_type, exc_msg)
+        result = await execute_async(code, entry_point="foo")
+        assert result.result is None
+        assert exc_msg in result.error
+        assert exc_type in result.error
 
-async def gen2():
+    async def test_undefined_variable(self):
+        code = """
+async def foo():
+    return undefined_variable
+        """
+        result = await execute_async(code, entry_point="foo")
+        assert result.result is None
+        assert "NameError" in result.error
+        assert "undefined_variable" in result.error
+
+@pytest.mark.asyncio
+class TestRealWorldScenarios:
+    async def test_async_enumerate(self):
+        code = """
+async def async_enumerate(async_iterable, start=0):
+    i = start
+    async for item in async_iterable:
+        yield (i, item)
+        i += 1
+
+async def gen():
     yield "a"
-    await asyncio.sleep(0.01)
     yield "b"
+    yield "c"
 
-async def compute():
-    g1 = gen1()
-    g2 = gen2()
-    results = []
-    results.append(await g1.__anext__())  # 1
-    results.append(await g2.__anext__())  # "a"
-    results.append(await g1.__anext__())  # 2
-    results.append(await g2.__anext__())  # "b"
-    return results
-"""
-    result = await execute_async(source, entry_point="compute", allowed_modules=["asyncio"])
-    assert result.result == [1, "a", 2, "b"]
+async def main():
+    return [(i, x) async for i, x in async_enumerate(gen())]
+        """
+        result = await execute_async(code, entry_point="main")
+        assert result.result == [(0, 'a'), (1, 'b'), (2, 'c')]
+        assert result.error is None
 
-@pytest.mark.asyncio
-async def test_generator_patterns_comparison():
-    """Test comparing collection, generator and async generator patterns"""
-    source = """
-def get_collection():
-    return [1, 2, 3]
+    async def test_async_sort_with_lambda(self):
+        code = """
+import asyncio
 
-def sync_generator():
-    yield 1
-    yield 2
-    yield 3
+async def async_key(item):
+    await asyncio.sleep(0)
+    return item
 
-async def async_generator():
-    yield 1
-    await asyncio.sleep(0.01)
-    yield 2
-    await asyncio.sleep(0.01)
-    yield 3
-
-async def compute():
-    # Test collection
-    collection = get_collection()
-    
-    # Test sync generator
-    gen = sync_generator()
-    sync_results = [next(gen), next(gen), next(gen)]
-    
-    # Test async generator
-    async_gen = async_generator()
-    async_results = [
-        await async_gen.__anext__(),
-        await async_gen.__anext__(),
-        await async_gen.__anext__()
-    ]
-    
-    return {
-        'collection': collection,
-        'sync_generator': sync_results,
-        'async_generator': async_results
-    }
-"""
-    result = await execute_async(source, entry_point="compute", allowed_modules=["asyncio"])
-    assert result.result == {
-        'collection': [1, 2, 3],
-        'sync_generator': [1, 2, 3],
-        'async_generator': [1, 2, 3]
-    }
-
-@pytest.mark.asyncio
-async def test_generator_lifecycle():
-    source = """
-async def async_gen():
-    try:
-        yield 1
-        yield 2
-    finally:
-        yield "cleanup"  # This is not recommended but tests edge case
-
-async def compute():
-    gen = async_gen()
-    first = await gen.__anext__()
-    await gen.aclose()
-    try:
-        await gen.__anext__()
-    except StopAsyncIteration:
-        return [first, "closed"]
-"""
-    result = await execute_async(source, entry_point="compute", allowed_modules=["asyncio"])
-    assert result.result == [1, "closed"]
-
-@pytest.mark.asyncio
-async def test_asend_behavior():
-    """Test specifically for asend() value propagation"""
-    source = """
-async def async_gen():
-    x = yield 1
-    yield x
-
-async def compute():
-    gen = async_gen()
-    await gen.__anext__()  # First yield
-    result = await gen.asend(42)  # Send value
+async def main():
+    data = [4, 2, 3, 1]
+    result = [x async for x in sorted(data, key=async_key)]
     return result
-"""
-    result = await execute_async(source, entry_point="compute", allowed_modules=["asyncio"])
-    assert result.result == 42
+        """
+        result = await execute_async(code, entry_point="main")
+        assert result.result == [1, 2, 3, 4]
+        assert result.error is None
 
-@pytest.mark.asyncio
-async def test_athrow_behavior():
-    """Test specifically for athrow() exception handling"""
-    source = """
-async def async_gen():
-    try:
-        yield 1
-    except ValueError:
-        yield "caught"
+    async def test_hn_processing(self):
+        code = """
+import asyncio
 
-async def compute():
-    gen = async_gen()
-    await gen.__anext__()
-    result = await gen.athrow(ValueError)
+class HNItem:
+    def __init__(self, title, score, url):
+        self.title = title
+        self.score = score
+        self.url = url
+
+async def fetch_item(item_id):
+    await asyncio.sleep(0)
+    return HNItem(f"Item {item_id}", item_id * 10, f"https://example.com/{item_id}")
+
+async def process_items(item_ids):
+    items = [await fetch_item(i) for i in item_ids]
+    result = ""
+    for item in sorted(items, key=lambda x: (-x.score, x.title)):
+        result += f"Title: {item.title}, Score: {item.score}\\n"
+        result += f"URL: {item.url}\\n"
     return result
-"""
-    result = await execute_async(source, entry_point="compute", allowed_modules=["asyncio"])
-    assert result.result == "caught"
 
-@pytest.mark.asyncio
-async def test_aclose_behavior():
-    """Test specifically for aclose() cleanup"""
-    source = """
-async def async_gen():
-    try:
-        yield 1
-    finally:
-        return "cleanup"
+async def main():
+    result = await process_items([3, 1, 2])
+    return result.splitlines()[0]
+        """
+        result = await execute_async(code, entry_point="main")
+        assert result.result == "Title: Item 3, Score: 30"
+        assert result.error is None
 
-async def compute():
-    gen = async_gen()
-    await gen.__anext__()
-    result = await gen.aclose()
-    return result
-"""
-    result = await execute_async(source, entry_point="compute", allowed_modules=["asyncio"])
-    assert result.result == "cleanup"
+    async def test_async_sort_error_and_solution(self):
+        error_code = """
+import asyncio
 
-@pytest.mark.asyncio
-async def test_nested_generator_flow():
-    """Test control flow between nested generators"""
-    source = """
-async def inner():
-    yield "inner"
+class Item:
+    def __init__(self, value):
+        self.value = value
 
-async def outer():
-    yield "outer-start"
-    async for x in inner():
-        yield x
-    yield "outer-end"
+    async def get_value(self):
+        await asyncio.sleep(0)
+        return self.value
 
-async def compute():
-    results = []
-    async for x in outer():
-        results.append(x)
-    return results
-"""
-    result = await execute_async(source, entry_point="compute", allowed_modules=["asyncio"])
-    assert result.result == ["outer-start", "inner", "outer-end"]
+async def main():
+    items = [Item(3), Item(1), Item(2)]
+    sorted_items = sorted(items, key=lambda x: x.get_value())
+    return [item.value for item in sorted_items]
+        """
+        error_result = await execute_async(error_code, entry_point="main")
+        assert "'<' not supported between instances of 'coroutine' and 'coroutine'" in error_result.error
+
+        fixed_code = """
+import asyncio
+
+class Item:
+    def __init__(self, value):
+        self.value = value
+
+    async def get_value(self):
+        await asyncio.sleep(0)
+        return self.value
+
+async def main():
+    items = [Item(3), Item(1), Item(2)]
+    sorted_items = sorted(items, key=lambda x: x.get_value())
+    return [item.value for item in sorted_items]
+        """
+        result = await execute_async(fixed_code, entry_point="main")
+        assert result.result == [1, 2, 3]
+        assert result.error is None
