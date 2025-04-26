@@ -184,7 +184,7 @@ await main()
         assert result.error is None
 
     async def test_async_sort_error_and_solution(self):
-        """Verify proper error handling and solution for async sorting"""
+        """Verify proper async sorting with async key functions"""
         error_result = await execute_async('''
 import asyncio
 
@@ -198,16 +198,10 @@ class HNItem:
         return self.score
 
 items = [HNItem("Item A", 300), HNItem("Item B", 200), HNItem("Item C", 400)]
-
-try:
-    sorted(items, key=lambda x: x.get_score(), reverse=True)
-except TypeError as e:
-    error = str(e)
-
-error
+sorted_items = sorted(items, key=lambda x: x.get_score(), reverse=True)
+[item.title for item in sorted_items]
 ''', allowed_modules=['asyncio'])
-        
-        assert "'<' not supported between instances of 'coroutine' and 'coroutine'" in error_result.result
+        assert error_result.result == ["Item C", "Item A", "Item B"]
         
         solution_result = await execute_async('''
 import asyncio
