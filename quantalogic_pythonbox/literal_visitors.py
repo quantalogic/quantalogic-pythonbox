@@ -44,7 +44,6 @@ async def visit_Attribute(self: ASTInterpreter, node: ast.Attribute, wrap_except
 async def visit_Subscript(self: ASTInterpreter, node: ast.Subscript, wrap_exceptions: bool = True) -> Any:
     try:
 
-        
         # Normal subscript handling
         value: Any = await self.visit(node.value, wrap_exceptions=wrap_exceptions)
         
@@ -63,8 +62,10 @@ async def visit_Subscript(self: ASTInterpreter, node: ast.Subscript, wrap_except
         
         # Make sure value has __getitem__ method before accessing with []
         if hasattr(value, '__getitem__'):
+            self.env_stack[0]["logger"].debug(f"Attempting __getitem__ on {type(value).__name__} with key {slice_val}")
             try:
                 result = value[slice_val]
+                self.env_stack[0]["logger"].debug(f"__getitem__ returned: {result}, type: {type(result)}")  # Modified to include type logging for debugging
                 if asyncio.iscoroutine(result):
                     result = await result
                 return result

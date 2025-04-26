@@ -54,6 +54,7 @@ async def _async_execute_async(
     ignore_typing: bool = False
 ) -> AsyncExecutionResult:
     start_time = time.time()
+    interpreter = None
     event_loop_manager = ControlledEventLoop()
     
     # Set default allowed modules
@@ -141,15 +142,13 @@ async def _async_execute_async(
                             except StopIteration as e:
                                 if hasattr(e, 'value') and e.value is not None:
                                     result = e.value
-                                else:
-                                    result = values
-                                local_vars = {}
-                                return AsyncExecutionResult(
-                                    result=result,
-                                    error=None,
-                                    execution_time=time.time() - start_time,
-                                    local_variables=local_vars
-                                )
+                                    local_vars = {}
+                                    return AsyncExecutionResult(
+                                        result=result,
+                                        error=None,
+                                        execution_time=time.time() - start_time,
+                                        local_variables=local_vars
+                                    )
                     except Exception as ex:
                         if isinstance(ex, StopIteration) and hasattr(ex, 'value'):
                             result = ex.value
@@ -254,7 +253,7 @@ async def _async_execute_async(
             local_variables={}
         )
     except Exception as e:
-        local_vars = interpreter.env_stack[-1]
+        local_vars = interpreter.env_stack[-1] if interpreter is not None else {}
         error_msg = f'{type(e).__name__}: {str(e)}'
         if hasattr(e, 'lineno') and hasattr(e, 'col_offset'):
             error_msg += f' at line {e.lineno}, col {e.col_offset}'

@@ -431,17 +431,25 @@ class ASTInterpreter:
             "Unsupported AST node type: %s at line %d.\nContext: %s" % (node.__class__.__name__, lineno, context_line)
         )
 
-    async def execute_async(self, node: ast.Module) -> Any:
-        try:
+    async def execute_async(self, node: ast.Module, entry_point: str = None) -> Any:
+        self.env_stack[0]['logger'].debug("Starting execute_async visit")
+        if entry_point:
+            func_node = self.find_function_node(node, entry_point)
+            if func_node:
+                func = await self.visit(func_node)
+                result = await func()
+            else:
+                raise ValueError(f"Entry point '{entry_point}' not found in the module.")
+        else:
             result = await self.visit(node)
-            local_vars = {k: v for k, v in self.env_stack[-1].items() if not k.startswith('__')}
-            return result, local_vars
-        except Exception as e:
-            local_vars = {k: v for k, v in self.env_stack[-1].items() if not k.startswith('__')}
-            return str(e), local_vars
+        local_vars = {k: v for k, v in self.env_stack[-1].items() if not k.startswith('__')}
+        return (result, local_vars)
 
-    def new_scope(self):
-        return Scope(self.env_stack)
+    def find_function_node(self, node: ast.Module, func_name: str) -> Optional[ast.AsyncFunctionDef]:
+        for stmt in node.body:
+            if isinstance(stmt, ast.AsyncFunctionDef) and stmt.name == func_name:
+                return stmt
+        return None
 
     async def visit_AugAssign(self, node: ast.AugAssign, wrap_exceptions: bool = True) -> Any:
         value = await self.visit(node.value, wrap_exceptions=wrap_exceptions)
@@ -540,7 +548,8 @@ class ASTInterpreter:
                             stmt_result = await self.visit(stmt, wrap_exceptions=False)
                             self.env_stack[0]['logger'].debug("Executed statement in except block: " + str(stmt.__class__.__name__) + ", result: " + str(stmt_result))
                             if isinstance(stmt, ast.Return):
-                                return stmt_result
+                                value = await self.visit(stmt.value, wrap_exceptions=wrap_exceptions) if stmt.value else None
+                                raise ReturnException(value)
                         matched = True
                         break
                 else:  # Bare except
@@ -551,7 +560,8 @@ class ASTInterpreter:
                         stmt_result = await self.visit(stmt, wrap_exceptions=False)
                         self.env_stack[0]['logger'].debug("Executed statement in bare except block: " + str(stmt.__class__.__name__) + ", result: " + str(stmt_result))
                         if isinstance(stmt, ast.Return):
-                            return stmt_result  # Early return if return statement is in except block
+                            value = await self.visit(stmt.value, wrap_exceptions=wrap_exceptions) if stmt.value else None
+                            raise ReturnException(value)
                     matched = True
                     break
             if not matched:
@@ -564,7 +574,8 @@ class ASTInterpreter:
                     stmt_result = await self.visit(stmt, wrap_exceptions=wrap_exceptions)
                     self.env_stack[0]['logger'].debug("Executed statement in orelse block: " + str(stmt.__class__.__name__) + ", result: " + str(stmt_result))
                     if isinstance(stmt, ast.Return):
-                        return stmt_result  # Early return if return statement is in orelse block
+                        value = await self.visit(stmt.value, wrap_exceptions=wrap_exceptions) if stmt.value else None
+                        raise ReturnException(value)
         finally:
             self.env_stack[0]['logger'].debug("Executing finally block if present")
             if node.finalbody:
@@ -572,8 +583,10 @@ class ASTInterpreter:
                     stmt_result = await self.visit(stmt, wrap_exceptions=wrap_exceptions)
                     self.env_stack[0]['logger'].debug("Executed statement in finally block: " + str(stmt.__class__.__name__) + ", result: " + str(stmt_result))
                     if isinstance(stmt, ast.Return):
-                        return stmt_result  # Early return if return statement is in finally block
+                        value = await self.visit(stmt.value, wrap_exceptions=wrap_exceptions) if stmt.value else None
+                        raise ReturnException(value)
+        self.env_stack[0]['logger'].debug("Exiting visit_Try")
+        return None
 
-    async def visit_Return(self, node: ast.Return, wrap_exceptions: bool = True) -> Any:
-        value = await self.visit(node.value, wrap_exceptions=wrap_exceptions)
-        return value
+    def new_scope(self):
+        return Scope(self.env_stack)

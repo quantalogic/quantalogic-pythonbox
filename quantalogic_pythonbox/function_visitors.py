@@ -185,6 +185,7 @@ async def visit_Call(interpreter, node: ast.Call, is_await_context: bool = False
 async def visit_Await(interpreter, node: ast.Await, wrap_exceptions: bool = True) -> Any:
     from .exceptions import WrappedException
     coro = await interpreter.visit(node.value, is_await_context=True, wrap_exceptions=wrap_exceptions)
+    interpreter.env_stack[0]["logger"].debug(f"Attempting to await object of type {type(coro)} with value {coro}")
     if not asyncio.iscoroutine(coro):
         raise TypeError(f"Cannot await non-coroutine object: {type(coro)}")
     

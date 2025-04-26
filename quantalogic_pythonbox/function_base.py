@@ -200,7 +200,7 @@ class Function:
                         local_frame = {}
                         
                         # Add the instance as 'self'
-                        local_frame[self.pos_kw_params[0]] = getattr(self, 'instance', None) or getattr(self, '__self__', None)
+                        local_frame[self.pos_kw_params[0]] = instance
                         
                         # Add the key parameter
                         if len(self.pos_kw_params) > 1:
@@ -211,23 +211,24 @@ class Function:
                         # Create a new interpreter with our environment
                         new_interp = self.interpreter.spawn_from_env(new_env_stack)
                         
-                        # Execute the function body and capture the return value
+                        # Execute the function body synchronously and capture the return value
                         result = None
                         for stmt in body:
-                            if isinstance(stmt, ast.Return):
-                                result = new_interp.run_sync_expr(stmt.value)
-                                break
-                            new_interp.run_sync_stmt(stmt)
+                            result = new_interp.run_sync_stmt(stmt)
+                            if result is not None:
+                                return result
                         
                         if result is None:
-                            # Handle case where no explicit return is found
-                            return f"Custom slice: {key}"  # Return formatted string for custom slicing
+                            logger.debug(f"No return value from {self.node.name}, returning default")
+                            return None
                         return result
                     except Exception as e:
+                        logger.error(f"Error in {self.node.name}: {str(e)}")
                         from quantalogic_pythonbox.exceptions import WrappedException
-                        if isinstance(e, WrappedException):
-                            return str(e)
-                        raise e
+                        lineno = getattr(self.node, 'lineno', 0)
+                        col = getattr(self.node, 'col_offset', 0)
+                        context_line = f"{self.node.name} call"
+                        raise WrappedException(str(e), e, lineno, col, context_line) from e
             else:  
                 # Create a method that will be called synchronously using direct AST execution
                 def special_method(*args: Any, **kwargs: Any) -> Any:
@@ -255,7 +256,6 @@ class Function:
                     for name, value in kwargs.items():
                         local_frame[name] = value
                     
-                    # Push the local frame to the environment
                     new_env_stack.append(local_frame)
                     
                     # Create a new interpreter with our environment
@@ -264,13 +264,12 @@ class Function:
                     # Execute each statement in the function body synchronously
                     result = None
                     for stmt in body:
-                        if isinstance(stmt, ast.Return):
-                            result = new_interp.run_sync_expr(stmt.value)
-                        else:
-                            new_interp.run_sync_stmt(stmt)
+                        result = new_interp.run_sync_stmt(stmt)
+                        if result is not None:
+                            break
                     
-                    return result  # Return the last result from Return statement
-            
+                    return result
+                
             special_method.__self__ = instance
             return special_method
         else:

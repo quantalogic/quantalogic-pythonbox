@@ -1,6 +1,7 @@
 import pytest
 from quantalogic_pythonbox import execute_async
 import math
+import logging
 
 # Test fixtures
 @pytest.fixture
@@ -56,6 +57,9 @@ class TestBasicFunctionality:
 class TestSearchEnumerations:
     """Tests for search result enumeration scenarios"""
     
+    def setup_method(self):
+        self.logger = logging.getLogger(__name__)
+
     @pytest.mark.parametrize("input_data,expected", [
         ([
             {"title": "Story 1", "score": 42},
@@ -93,6 +97,9 @@ async def main():
     return report
 '''
         result = await execute_async(code, entry_point='main')
+        self.logger.debug(f"Execute_async result type: {type(result)}")
+        self.logger.debug(f"Execute_async result value: {result}")
+        self.logger.debug(f"Expected value: {expected}")
         assert result.result.strip() == expected.strip()
 
     async def test_enumerate_empty_results(self):
@@ -120,6 +127,7 @@ async def main():
         report += f"\n{idx}. {story['title']} (Score: {story['score']})"
     return report
 ''', entry_point='main')
+        self.logger.debug(f"Execute_async result type: {type(result)}")
         assert result.result.strip() == """
 1. Lone Story (Score: 99)""".strip()
 
@@ -146,6 +154,7 @@ async def main():
 2. Missing Score (Score: N/A)
 3. Untitled (Score: 30)
 4. Untitled (Score: N/A)"""
+        self.logger.debug(f"Execute_async result type: {type(result)}")
         assert result.result.strip() == expected.strip()
 
     async def test_enumerate_large_results(self):
@@ -163,6 +172,7 @@ async def main():
         report += "\n... (truncated)"
     return report
 ''', entry_point='main')
+        self.logger.debug(f"Execute_async result type: {type(result)}")
         assert "Found 100 stories" in result.result
         assert "1. Story 0 (Score: 0)" in result.result
         assert "... (truncated)" in result.result
