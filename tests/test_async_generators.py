@@ -194,7 +194,8 @@ class Item:
 
 async def main():
     items = [Item(3), Item(1), Item(2)]
-    sorted_items = sorted(items, key=lambda x: x.get_value())
+    values = [await item.get_value() for item in items]
+    sorted_items = sorted(items, key=lambda x: values[items.index(x)])
     return [item.value for item in sorted_items]
         """
         result = await execute_async(fixed_code, entry_point="main")

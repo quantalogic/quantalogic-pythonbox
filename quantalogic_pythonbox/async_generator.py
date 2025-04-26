@@ -173,6 +173,11 @@ class AsyncGeneratorFunction:
                     value = await self.execute_gen.asend(None)
                     logger.debug(f"Returning value from __anext__: {value}")
                     return value
+                except RuntimeError as e:
+                    if "async generator raised StopAsyncIteration" in str(e):
+                        logger.debug("StopAsyncIteration in __anext__")
+                        raise StopAsyncIteration
+                    raise
                 except StopAsyncIteration as e:
                     logger.debug(f"StopAsyncIteration in __anext__ with args: {e.args}")
                     self.return_value = e.args[0] if e.args else None
@@ -184,6 +189,11 @@ class AsyncGeneratorFunction:
                     value = await self.execute_gen.asend(value)
                     logger.debug(f"Returning value from asend: {value}")
                     return value
+                except RuntimeError as e:
+                    if "async generator raised StopAsyncIteration" in str(e):
+                        logger.debug("StopAsyncIteration in asend")
+                        raise StopAsyncIteration
+                    raise
                 except StopAsyncIteration as e:
                     logger.debug(f"StopAsyncIteration in asend with args: {e.args}")
                     self.return_value = e.args[0] if e.args else None
@@ -200,6 +210,11 @@ class AsyncGeneratorFunction:
                     value = await self.execute_gen.athrow(exc_val)
                     logger.debug(f"Returning value from athrow: {value}")
                     return value
+                except RuntimeError as e:
+                    if "async generator raised StopAsyncIteration" in str(e):
+                        logger.debug("StopAsyncIteration in athrow")
+                        raise StopAsyncIteration
+                    raise
                 except StopAsyncIteration as e:
                     logger.debug(f"StopAsyncIteration in athrow with args: {e.args}")
                     self.return_value = e.args[0] if e.args else None
