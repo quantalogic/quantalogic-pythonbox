@@ -590,3 +590,8 @@ class ASTInterpreter:
 
     def new_scope(self):
         return Scope(self.env_stack)
+
+    async def _resolve_exception_type(self, node: Optional[ast.AST]) -> Any:
+        if node is None:
+            return Exception
+        return await self.visit(node, wrap_exceptions=True)
