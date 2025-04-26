@@ -151,6 +151,9 @@ class AsyncGeneratorFunction:
             except ReturnException as ret:
                 logger.debug(f"Caught ReturnException with value: {ret.value}")
                 raise StopAsyncIteration(ret.value or None)
+            except StopAsyncIteration:
+                # propagate generator completion
+                raise
             except Exception as e:
                 logger.debug(f"Caught exception in generator: {type(e).__name__}")
                 raise e
@@ -196,7 +199,8 @@ class AsyncGeneratorFunction:
                     self.result = self.yielded_values if self.yielded_values else []
                     self.execution_finished = True
                     self.active = False
-                    raise StopIteration(self.result)
+                    # propagate async generator completion
+                    raise StopAsyncIteration(self.result)
                 except Exception as e:
                     logger.debug(f"Exception in asend: {type(e).__name__}")
                     raise
@@ -219,7 +223,8 @@ class AsyncGeneratorFunction:
                     self.result = self.yielded_values if self.yielded_values else []
                     self.execution_finished = True
                     self.active = False
-                    raise StopIteration(self.result)
+                    # propagate async generator completion
+                    raise StopAsyncIteration(self.result)
                 except Exception as e:
                     logger.debug(f"Exception in athrow: {type(e).__name__}")
                     self.result = "caught"
