@@ -41,61 +41,9 @@ async def visit_Assert(self: ASTInterpreter, node: ast.Assert, wrap_exceptions: 
 
 async def visit_Yield(self: ASTInterpreter, node: ast.Yield, wrap_exceptions: bool = True) -> Any:
     logger.debug("Visiting Yield")
-    
-    # First, evaluate what we're yielding
-    # For example, in 'yield 1', this is 1
-    # In 'yield x', this is the current value of x
-    value_to_yield = None
     if node.value:
-        # This gets the expression value after the 'yield' keyword
-        # Special handling for Name nodes to ensure we get the most current value
-        if isinstance(node.value, ast.Name):
-            # For 'yield x', get x directly from the environment frame
-            var_name = node.value.id
-            if len(self.env_stack) > 0 and var_name in self.env_stack[-1]:
-                value_to_yield = self.env_stack[-1][var_name]
-                logger.debug(f"Directly accessing variable {var_name} = {value_to_yield}")
-            # Fallback to normal visit if not found
-            if value_to_yield is None:
-                value_to_yield = await self.visit(node.value, wrap_exceptions=wrap_exceptions)
-        else:
-            # Normal evaluation for other expressions
-            value_to_yield = await self.visit(node.value, wrap_exceptions=wrap_exceptions)
-    
-    logger.debug(f"Prepared value to yield: {value_to_yield}")
-    
-    # Only process as a generator yield if we're in an active generator context
-    if 'yield_queue' in self.generator_context and self.generator_context.get('active', False):
-        # CRITICAL: Send the yielded value to the caller
-        logger.debug(f"Putting value into yield_queue: {value_to_yield}")
-        await self.generator_context['yield_queue'].put(value_to_yield)
-        
-        # Wait for caller to send a value back via asend()
-        logger.debug("Waiting for sent value from sent_queue")
-        sent_value = await self.generator_context['sent_queue'].get()
-        logger.debug(f"Received sent value: {sent_value}")
-        
-        # Store sent value in generator context for access by other components
-        self.generator_context['sent_value'] = sent_value
-        
-        # Handle exceptions sent via throw()
-        if isinstance(sent_value, BaseException):
-            logger.debug(f"Raising exception from sent value: {sent_value}")
-            raise sent_value
-        
-        # CRITICAL: Return the sent value which becomes the result of the yield expression
-        # This is what makes assignments like 'x = yield 1' work
-        # The variable x will get this sent_value (2 in our test case)
-        logger.debug(f"Returning sent value from yield: {sent_value}")
-        return sent_value
-    
-    self.recursion_depth += 1
-    if self.recursion_depth > self.max_recursion_depth:
-        logger.debug("Recursion depth exceeded")
-        raise RecursionError(f"Maximum recursion depth exceeded in yield ({self.max_recursion_depth})")
-    self.recursion_depth -= 1
-    logger.debug(f"Returning value in non-generator context: {value_to_yield}")
-    return value_to_yield
+        return await self.visit(node.value, wrap_exceptions=wrap_exceptions)
+    return None
 
 async def visit_YieldFrom(self: ASTInterpreter, node: ast.YieldFrom, wrap_exceptions: bool = True) -> Any:
     logger.debug("Visiting YieldFrom")
