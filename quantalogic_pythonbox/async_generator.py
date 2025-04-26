@@ -184,7 +184,8 @@ class AsyncGeneratorFunction:
                     self.result = self.yielded_values if self.yielded_values else []
                     self.execution_finished = True
                     self.active = False
-                    raise StopAsyncIteration
+                    # propagate original StopAsyncIteration
+                    raise e
 
             async def asend(self, value):
                 logger.debug(f"Entering AsyncGenerator.asend with value: {value}")

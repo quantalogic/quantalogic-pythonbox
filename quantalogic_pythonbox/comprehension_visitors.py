@@ -132,7 +132,7 @@ async def visit_SetComp(interpreter, node: ast.SetComp, wrap_exceptions: bool = 
 
 
 async def visit_GeneratorExp(interpreter, node: ast.GeneratorExp, wrap_exceptions: bool = True) -> Any:
-    from .exceptions import has_await
+    from .utils import has_await
     if not has_await(node):
         result = []
         base_frame = interpreter.env_stack[-1].copy()

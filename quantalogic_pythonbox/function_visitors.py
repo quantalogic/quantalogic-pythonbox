@@ -38,6 +38,7 @@ async def visit_FunctionDef(interpreter, node: ast.FunctionDef, wrap_exceptions:
 
 async def visit_AsyncFunctionDef(interpreter, node: ast.AsyncFunctionDef, wrap_exceptions: bool = True) -> None:
     from .function_utils import AsyncFunction, AsyncGeneratorFunction
+    from .utils import has_await
     closure: List[Dict[str, Any]] = interpreter.env_stack[:]
     pos_kw_params = [arg.arg for arg in node.args.args]
     vararg_name = node.args.vararg.arg if node.args.vararg else None
