@@ -762,19 +762,19 @@ class AsyncGeneratorFunction:
             async def athrow(self, exc_type, exc_val=None, exc_tb=None):
                 logger.debug(f"Entering AsyncGenerator.athrow with exc_type: {exc_type}")
                 
-                # Special direct handling for the test case with ValueError exception
-                if (isinstance(exc_type, type) and exc_type is ValueError) or \
-                   (isinstance(exc_val, ValueError)) or \
-                   (isinstance(exc_type, ValueError)):
-                    # For ValueErrors, handle the special test case directly
-                    logger.debug("Direct handling for ValueError in athrow")
-                    return "caught"
-                
                 if not new_interp.generator_context['active']:
                     logger.debug("Generator not active, raising StopAsyncIteration")
                     if execution_task and not execution_task.done():
                         execution_task.cancel()
                     raise StopAsyncIteration(self.return_value)
+                
+                # Clear any pending yields to avoid stale values before throwing exception
+                try:
+                    while not new_interp.generator_context['yield_queue'].empty():
+                        val = await new_interp.generator_context['yield_queue'].get_nowait()
+                        logger.debug(f"Cleared existing value from yield_queue: {val}")
+                except Exception as e:
+                    logger.debug(f"Error clearing yield_queue: {e}")
                 
                 # Create the exception instance if needed
                 if exc_val is None:
@@ -790,9 +790,13 @@ class AsyncGeneratorFunction:
                 new_interp.generator_context['exception_value'] = exc_val
                 new_interp.generator_context['in_exception_handler'] = False
                 
-                # Make sure there's no value in the yield_queue already
-                if not yield_queue.empty():
-                    await yield_queue.get()  # Clear any pending yield values
+                # Clear any pending yields to avoid stale values before throwing exception
+                try:
+                    while not yield_queue.empty():
+                        await yield_queue.get_nowait()
+                        logger.debug("Cleared existing value from yield_queue")
+                except Exception as e:
+                    logger.debug(f"Error clearing yield_queue: {e}")
                 
                 # Throw the exception into the generator
                 await sent_queue.put(exc_val)
@@ -804,12 +808,14 @@ class AsyncGeneratorFunction:
                     value = await asyncio.wait_for(yield_queue.get(), timeout=1.0)
                     logger.debug(f"Got value from athrow's yield_queue: {value}")
                     
+                    # Special handling for exceptions from the generator
                     if isinstance(value, Exception) and not isinstance(value, (StopAsyncIteration, GeneratorExit)):
-                        logger.debug(f"Re-raising exception from generator: {value}")
+                        logger.debug(f"Raising exception from generator: {value}")
                         if execution_task and not execution_task.done():
                             execution_task.cancel()
                         raise value
                         
+                    # Handle the generator closing
                     if new_interp.generator_context.get('closed'):
                         logger.debug("Generator closed, raising StopAsyncIteration")
                         self.return_value = value
@@ -817,6 +823,9 @@ class AsyncGeneratorFunction:
                             execution_task.cancel()
                         raise StopAsyncIteration(value)
                         
+                    # Resume generator execution by sending None
+                    await sent_queue.put(None)
+                    
                     logger.debug(f"Returning caught value: {value}")
                     return value
                     
@@ -836,22 +845,11 @@ class AsyncGeneratorFunction:
                     except asyncio.TimeoutError:
                         logger.debug("Second timeout in athrow, giving up")
                         
-                        # Second attempt at static analysis for the exception handler
-                        # This time with more specific checking for the test case pattern
-                        if isinstance(exc_val, ValueError) or (isinstance(exc_type, type) and exc_type is ValueError):
-                            # For the specific ValueError test case
-                            logger.debug("Special handling for ValueError test case")
-                            return "caught"
-                        
                         # Check for exception handlers in the AST
                         try:
                             # Access the function node from the generator context
                             func_node = new_interp.generator_context.get('func_node')
                             if func_node is None:
-                                # If we can't get the node, default to a simple check
-                                if isinstance(exc_val, ValueError) or (isinstance(exc_type, type) and exc_type is ValueError):
-                                    logger.debug("Fallback for ValueError without node: returning 'caught'")
-                                    return "caught"
                                 raise ValueError("Cannot access function node")
                                 
                             # Look through the generator's AST for try-except blocks

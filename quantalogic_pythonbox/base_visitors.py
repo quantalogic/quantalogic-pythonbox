@@ -1,7 +1,6 @@
 import ast
 from typing import Any
 
-from .exceptions import WrappedException
 from .interpreter_core import ASTInterpreter
 
 async def visit_Module(self: ASTInterpreter, node: ast.Module, wrap_exceptions: bool = True) -> Any:

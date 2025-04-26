@@ -1,5 +1,4 @@
 import ast
-from typing import Any
 
 from .interpreter_core import ASTInterpreter
 

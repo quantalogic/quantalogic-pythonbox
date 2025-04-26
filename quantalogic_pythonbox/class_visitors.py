@@ -1,5 +1,5 @@
 import ast
-from typing import Any, Dict, List
+from typing import Any
 
 from .function_utils import Function
 from .interpreter_core import ASTInterpreter

@@ -1,5 +1,5 @@
 import ast
-from typing import Any, Dict, List, AsyncGenerator
+from typing import Any, Dict, List
 
 from .interpreter_core import ASTInterpreter
 from .exceptions import WrappedException, has_await

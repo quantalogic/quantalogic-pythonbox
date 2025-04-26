@@ -392,8 +392,13 @@ class ASTInterpreter:
         self.env_stack[0]["logger"].debug(f"Visiting {method_name} at line {getattr(node, 'lineno', 'unknown')}")
         
         try:
-            if self.sync_mode and not hasattr(node, 'await'):
-                result = method(node, wrap_exceptions=wrap_exceptions)
+            if self.sync_mode:
+                # Run visitor synchronously via sync_call
+                func = method.__func__ if hasattr(method, '__func__') else method
+                if method_name == "visit_Call":
+                    result = self.sync_call(func, self, node, is_await_context, wrap_exceptions)
+                else:
+                    result = self.sync_call(func, self, node, wrap_exceptions=wrap_exceptions)
             elif method_name == "visit_Call":
                 result = await method(node, is_await_context, wrap_exceptions)
             else:
@@ -552,10 +557,7 @@ class ASTInterpreter:
                                     method = method.__get__(target, type(target))
                             result = target.__getitem__(key)
                             self.env_stack[0]["logger"].debug(f"__getitem__ returned: {result}")
-                            if result is None:
-                                # Handle case where __getitem__ returns None
-                                return "Slice(None,None,None)"
-                            return result  # Ensure we return the slice result
+                            return result
                         else:
                             raise TypeError(f"Object of type {type(target).__name__} does not support indexing")
                     except Exception as e:
@@ -706,9 +708,6 @@ class ASTInterpreter:
                             if hasattr(target, '__getitem__'):
                                 result = target.__getitem__(s)
                                 logger.debug(f"Slice operation result: {result}")
-                                if result is None:
-                                    # Handle case where __getitem__ returns None
-                                    return "Slice(None,None,None)"
                                 return result
                             else:
                                 raise TypeError(f"Object of type {type(target).__name__} does not support indexing")
@@ -745,6 +744,54 @@ class ASTInterpreter:
         
         # For other node types, raise an exception
         raise RuntimeError(f"Cannot synchronously evaluate expression type: {node.__class__.__name__}")
+
+    async def visit_AugAssign(self, node: ast.AugAssign, wrap_exceptions: bool = True) -> Any:
+        # Handle augmented assignment (e.g., a += b)
+        value = await self.visit(node.value, wrap_exceptions=wrap_exceptions)
+        target = node.target
+        if isinstance(target, ast.Name):
+            current = self.get_variable(target.id)
+            new_value = self._apply_binary_op(current, node.op, value)
+            self.set_variable(target.id, new_value)
+        elif isinstance(target, ast.Attribute):
+            obj = await self.visit(target.value, wrap_exceptions=wrap_exceptions)
+            current = getattr(obj, target.attr)
+            new_value = self._apply_binary_op(current, node.op, value)
+            setattr(obj, target.attr, new_value)
+        elif isinstance(target, ast.Subscript):
+            obj = await self.visit(target.value, wrap_exceptions=wrap_exceptions)
+            key = await self.visit(target.slice, wrap_exceptions=wrap_exceptions)
+            current = obj[key]
+            new_value = self._apply_binary_op(current, node.op, value)
+            obj[key] = new_value
+        else:
+            raise Exception(f"Unsupported target for AugAssign: {type(target)}")
+        return None
+
+    def _apply_binary_op(self, left, op, right):
+        import operator as _operator
+        ops = {
+            ast.Add: _operator.add,
+            ast.Sub: _operator.sub,
+            ast.Mult: _operator.mul,
+            ast.Div: _operator.truediv,
+            ast.FloorDiv: _operator.floordiv,
+            ast.Mod: _operator.mod,
+            ast.Pow: _operator.pow,
+            ast.LShift: _operator.lshift,
+            ast.RShift: _operator.rshift,
+            ast.BitOr: _operator.or_,
+            ast.BitXor: _operator.xor,
+            ast.BitAnd: _operator.and_,
+        }
+        for ast_op, func in ops.items():
+            if isinstance(op, ast_op):
+                return func(left, right)
+        # Fallback: try built-in addition
+        try:
+            return left + right
+        except Exception:
+            raise Exception(f"Unsupported operator in AugAssign: {op}")
 
 
 class AsyncFunction:

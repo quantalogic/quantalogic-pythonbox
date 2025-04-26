@@ -9,6 +9,10 @@ async def visit_Assign(self: ASTInterpreter, node: ast.Assign, wrap_exceptions: 
         if isinstance(target, ast.Subscript):
             obj = await self.visit(target.value, wrap_exceptions=wrap_exceptions)
             key = await self.visit(target.slice, wrap_exceptions=wrap_exceptions)
+            # Support CustomSlice by converting to built-in slice
+            from quantalogic_pythonbox.slice_utils import CustomSlice
+            if isinstance(key, CustomSlice):
+                key = slice(key.start, key.stop, key.step)
             obj[key] = value
         else:
             await self.assign(target, value)
