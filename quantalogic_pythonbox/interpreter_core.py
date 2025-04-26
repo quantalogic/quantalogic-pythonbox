@@ -2,7 +2,7 @@ import ast
 import asyncio
 import logging
 import threading
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Callable
 
 import json
 import math
@@ -267,22 +267,27 @@ class ASTInterpreter:
             self.env_stack[0]["localcontext"] = dec.localcontext
             self.env_stack[0]["Context"] = dec.Context
 
+    def initialize_visitors(self):
+        """Attach visitor methods to the interpreter instance."""
         from . import visit_handlers
         for handler_name in visit_handlers.__all__:
             handler = getattr(visit_handlers, handler_name)
             setattr(self, handler_name, handler.__get__(self, ASTInterpreter))
 
     def safe_import(self, name: str, globals=None, locals=None, fromlist=(), level=0) -> Any:
+        self.env_stack[0]['logger'].debug("Attempting import of module '%s', allowed modules: %s" % (name, self.allowed_modules))
         os_related_modules = {"os", "sys", "subprocess", "shutil", "platform"}
         if self.restrict_os and name in os_related_modules:
-            raise ImportError(f"Import Error: Module '{name}' is blocked due to OS restriction.")
+            self.env_stack[0]['logger'].debug("Module '%s' blocked due to OS restriction" % name)
+            raise ImportError("Module '%s' is blocked due to OS restriction." % name)
         if name not in self.allowed_modules:
-            raise ImportError(f"Import Error: Module '{name}' is not allowed. Only {self.allowed_modules} are permitted.")
+            self.env_stack[0]['logger'].debug("Module '%s' not in allowed modules, raising ImportError" % name)
+            raise ImportError("Module '%s' is not allowed. Only %s are permitted." % (name, self.allowed_modules))
         return self.modules[name]
 
     def safe_getattr(self, obj: Any, name: str, default: Any = None) -> Any:
         if name.startswith('__') and name.endswith('__') and name not in ['__init__', '__call__']:
-            raise AttributeError(f"Access to dunder attribute '{name}' is restricted.")
+            raise AttributeError("Access to dunder attribute '%s' is restricted." % name)
         return getattr(obj, name, default)
 
     def spawn_from_env(self, env_stack: List[Dict[str, Any]]) -> "ASTInterpreter":
@@ -300,6 +305,7 @@ class ASTInterpreter:
         )
         new_interp.loop = self.loop
         new_interp.var_cache = self.var_cache.copy()
+        new_interp.initialize_visitors()
         return new_interp
 
     def get_variable(self, name: str) -> Any:
@@ -310,7 +316,7 @@ class ASTInterpreter:
                 if name in frame:
                     self.var_cache[name] = frame[name]
                     return frame[name]
-            raise NameError(f"Name '{name}' is not defined.")
+            raise NameError("Name '%s' is not defined." % name)
 
     def set_variable(self, name: str, value: Any) -> None:
         with self.lock:
@@ -325,13 +331,14 @@ class ASTInterpreter:
                         if name in self.var_cache:
                             del self.var_cache[name]
                         return
-                raise NameError(f"Nonlocal name '{name}' not found in outer scope")
+                raise NameError("Nonlocal name '%s' not found in outer scope" % name)
             else:
                 self.env_stack[-1][name] = value
                 if name in self.var_cache:
                     del self.var_cache[name]
 
     async def assign(self, target: ast.AST, value: Any) -> None:
+        self.env_stack[0]['logger'].debug(f"Assigning value {value} to target {target.__class__.__name__} in scope: {self.env_stack[-1].keys()} ")
         if isinstance(target, ast.Name):
             self.set_variable(target.id, value)
         elif isinstance(target, (ast.Tuple, ast.List)):
@@ -343,8 +350,7 @@ class ASTInterpreter:
                     star_index = i
             if star_index is None:
                 if len(target.elts) != len(value):
-                    # Fix: Raise ValueError for unpacking mismatch
-                    raise ValueError(f"not enough values to unpack (expected {len(target.elts)}, got {len(value)})")
+                    raise ValueError("not enough values to unpack (expected %d, got %d)" % (len(target.elts), len(value)))
                 for t, v in zip(target.elts, value):
                     await self.assign(t, v)
             else:
@@ -352,8 +358,7 @@ class ASTInterpreter:
                 before = target.elts[:star_index]
                 after = target.elts[star_index + 1:]
                 if len(before) + len(after) > total:
-                    # Fix: Raise ValueError for unpacking mismatch
-                    raise ValueError(f"not enough values to unpack (expected at least {len(before) + len(after)}, got {total})")
+                    raise ValueError("not enough values to unpack (expected at least %d, got %d)" % (len(before) + len(after), total))
                 for i, elt2 in enumerate(before):
                     await self.assign(elt2, value[i])
                 starred_count = total - len(before) - len(after)
@@ -363,9 +368,9 @@ class ASTInterpreter:
         elif isinstance(target, ast.Attribute):
             obj = await self.visit(target.value, wrap_exceptions=True)
             prop = getattr(type(obj), target.attr, None)
-            # Fix: Use property setter if available
             if isinstance(prop, property) and prop.fset:
-                await self._execute_function(prop.fset, [obj, value], {})
+                from .execution_utils import execute_function
+                await execute_function(prop.fset, [obj, value], {})
             else:
                 setattr(obj, target.attr, value)
         elif isinstance(target, ast.Subscript):
@@ -378,27 +383,27 @@ class ASTInterpreter:
     async def visit(self, node: ast.AST, is_await_context: bool = False, wrap_exceptions: bool = True) -> Any:
         self.operations_count += 1
         if self.operations_count > self.max_operations:
-            raise RuntimeError(f"Exceeded maximum operations ({self.max_operations})")
+            raise RuntimeError("Exceeded maximum operations (%d)" % self.max_operations)
         memory_usage = self.process.memory_info().rss / 1024 / 1024
         if memory_usage > self.max_memory_mb:
-            raise MemoryError(f"Memory usage exceeded limit ({self.max_memory_mb} MB)")
+            raise MemoryError("Memory usage exceeded limit (%d MB)" % self.max_memory_mb)
         
         self.recursion_depth += 1
         if self.recursion_depth > self.max_recursion_depth:
-            raise RecursionError(f"Maximum recursion depth exceeded ({self.max_recursion_depth})")
+            raise RecursionError("Maximum recursion depth exceeded (%d)" % self.max_recursion_depth)
         
         method_name: str = "visit_" + node.__class__.__name__
         method = getattr(self, method_name, self.generic_visit)
-        self.env_stack[0]["logger"].debug(f"Visiting {method_name} at line {getattr(node, 'lineno', 'unknown')}")
+        self.env_stack[0]["logger"].debug("Visiting %s at line %s" % (method_name, getattr(node, 'lineno', 'unknown')))
         
         try:
             if self.sync_mode:
-                # Run visitor synchronously via sync_call
+                from .execution_utils import sync_call
                 func = method.__func__ if hasattr(method, '__func__') else method
                 if method_name == "visit_Call":
-                    result = self.sync_call(func, self, node, is_await_context, wrap_exceptions)
+                    result = sync_call(func, self, node, is_await_context, wrap_exceptions)
                 else:
-                    result = self.sync_call(func, self, node, wrap_exceptions=wrap_exceptions)
+                    result = sync_call(func, self, node, wrap_exceptions=wrap_exceptions)
             elif method_name == "visit_Call":
                 result = await method(node, is_await_context, wrap_exceptions)
             else:
@@ -416,337 +421,29 @@ class ASTInterpreter:
             col = getattr(node, "col_offset", None) or 0
             context_line = self.source_lines[lineno - 1] if self.source_lines and 1 <= lineno <= len(self.source_lines) else ""
             raise WrappedException(
-                f"Error line {lineno}, col {col}:\n{context_line}\nDescription: {str(e)}", e, lineno, col, context_line
+                "Error line %d, col %d:\n%s\nDescription: %s" % (lineno, col, context_line, str(e)), e, lineno, col, context_line
             ) from e
 
     async def generic_visit(self, node: ast.AST, wrap_exceptions: bool = True) -> Any:
         lineno = getattr(node, "lineno", None) or 1
         context_line = self.source_lines[lineno - 1] if self.source_lines and 1 <= lineno <= len(self.source_lines) else ""
         raise Exception(
-            f"Unsupported AST node type: {node.__class__.__name__} at line {lineno}.\nContext: {context_line}"
+            "Unsupported AST node type: %s at line %d.\nContext: %s" % (node.__class__.__name__, lineno, context_line)
         )
 
-    async def visit_Module(self, node: ast.Module, wrap_exceptions: bool = True) -> Any:
-        result = None
-        for stmt in node.body:
-            result = await self.visit(stmt, wrap_exceptions=wrap_exceptions)
-        return result
-
     async def execute_async(self, node: ast.Module) -> Any:
-        return await self.visit(node)
+        try:
+            result = await self.visit(node)
+            local_vars = {k: v for k, v in self.env_stack[-1].items() if not k.startswith('__')}
+            return result, local_vars
+        except Exception as e:
+            local_vars = {k: v for k, v in self.env_stack[-1].items() if not k.startswith('__')}
+            return str(e), local_vars
 
     def new_scope(self):
         return Scope(self.env_stack)
 
-    async def _resolve_exception_type(self, node: Optional[ast.AST]) -> Any:
-        if node is None:
-            return Exception
-        if isinstance(node, ast.Name):
-            exc_type = self.get_variable(node.id)
-            if exc_type in (Exception, ZeroDivisionError, ValueError, TypeError):
-                return exc_type
-            return exc_type
-        if isinstance(node, ast.Call):
-            return await self.visit(node, wrap_exceptions=True)
-        return None
-
-    async def _create_class_instance(self, cls: type, *args, **kwargs):
-        instance = cls.__new__(cls, *args, **kwargs)
-        if isinstance(instance, cls) and hasattr(cls, '__init__'):
-            init_method = cls.__init__
-            await self._execute_function(init_method, [instance] + list(args), kwargs)
-        return instance
-
-    async def _execute_function(self, func: Any, args: List[Any], kwargs: Dict[str, Any]):
-        if asyncio.iscoroutinefunction(func):
-            return await func(*args, **kwargs)
-        elif callable(func):
-            result = func(*args, **kwargs)
-            if asyncio.iscoroutine(result):
-                return await result
-            return result
-        raise TypeError(f"Object {func} is not callable")
-        
-    def sync_call(self, func, instance, *args, **kwargs):
-        """Synchronously execute an async function.
-        
-        This method is specifically designed for special methods like __getitem__ that
-        may be called in contexts where awaiting is not possible (like slicing operations).
-        It creates a new event loop in a separate thread to avoid the 'cannot run event loop 
-        while another is running' error.
-        
-        Args:
-            func: The function object to execute
-            instance: The instance to bind the function to
-            *args: Arguments to pass to the function
-            **kwargs: Keyword arguments to pass to the function
-            
-        Returns:
-            The result of the function call
-        """
-        # Create a separate thread to run a new event loop
-        result_container = []
-        error_container = []
-        
-        def thread_runner():
-            try:
-                # Create a new loop for this thread
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                try:
-                    # Run the coroutine in this thread's event loop
-                    coro = func(instance, *args, **kwargs)
-                    result = loop.run_until_complete(coro)
-                    result_container.append(result)
-                finally:
-                    loop.close()
-            except Exception as e:
-                error_container.append(e)
-        
-        # Start and wait for the thread to complete
-        thread = threading.Thread(target=thread_runner)
-        thread.start()
-        thread.join()
-        
-        # Check for errors and return the result
-        if error_container:
-            raise error_container[0]
-        if result_container:
-            return result_container[0]
-        return None
-        
-    def run_sync_stmt(self, node: ast.AST) -> Any:
-        """Execute a single AST statement synchronously.
-        
-        This is specifically designed for special methods like __getitem__
-        that need to execute synchronously but are used in contexts where
-        async/await might not be available.
-        
-        Args:
-            node: The AST node to execute
-            
-        Returns:
-            The result of executing the node
-        """
-        # Handle specific node types that we know will work in sync mode
-        if isinstance(node, ast.Return):
-            # For return statements, evaluate the value and return it
-            if node.value:
-                if isinstance(node.value, ast.Subscript):
-                    try:
-                        # Handle slicing operations specially
-                        target = self.run_sync_stmt(node.value.value)
-                        if isinstance(node.value.slice, ast.Slice):
-                            # Process slice parts
-                            start = self.run_sync_stmt(node.value.slice.lower) if node.value.slice.lower else None
-                            stop = self.run_sync_stmt(node.value.slice.upper) if node.value.slice.upper else None
-                            step = self.run_sync_stmt(node.value.slice.step) if node.value.slice.step else None
-                            # Create a custom slice object
-                            from quantalogic_pythonbox.slice_utils import CustomSlice
-                            key = CustomSlice(start, stop, step)
-                        else:
-                            # Normal subscript
-                            key = self.run_sync_stmt(node.value.slice)
-                        
-                        # Call the __getitem__ method directly
-                        if hasattr(target, '__getitem__'):
-                            self.env_stack[0]["logger"].debug(f"Calling __getitem__ on {target} with key {key}")
-                            if callable(target.__getitem__):
-                                method = target.__getitem__
-                                if not hasattr(method, '__self__'):
-                                    method = method.__get__(target, type(target))
-                            result = target.__getitem__(key)
-                            self.env_stack[0]["logger"].debug(f"__getitem__ returned: {result}")
-                            return result
-                        else:
-                            raise TypeError(f"Object of type {type(target).__name__} does not support indexing")
-                    except Exception as e:
-                        # Let the exception propagate but wrapped with more context
-                        from quantalogic_pythonbox.exceptions import WrappedException
-                        # Extract line and column information from the node
-                        lineno = getattr(node, 'lineno', 0)
-                        col = getattr(node, 'col_offset', 0)
-                        # Create a generic context line for the error message
-                        context_line = "slice operation"
-                        raise WrappedException(str(e), e, lineno, col, context_line) from e
-                else:
-                    # Regular expression
-                    return self.run_sync_expr(node.value)
-            return None
-        elif isinstance(node, ast.Expr):
-            # Expression statement
-            return self.run_sync_expr(node.value)
-        elif isinstance(node, ast.If):
-            # If statement
-            test_result = self.run_sync_expr(node.test)
-            if test_result:
-                for stmt in node.body:
-                    result = self.run_sync_stmt(stmt)
-                return result
-            else:
-                for stmt in node.orelse:
-                    result = self.run_sync_stmt(stmt)
-                return result
-        
-        # For other node types, raise an exception
-        raise RuntimeError(f"Cannot synchronously execute node type: {node.__class__.__name__}")
-    
-    def run_sync_expr(self, node: ast.AST) -> Any:
-        """Execute a single AST expression synchronously.
-        
-        Args:
-            node: The AST expression node to execute
-            
-        Returns:
-            The result of evaluating the expression
-        """
-        if isinstance(node, ast.Name):
-            # Variable reference
-            return self.get_variable(node.id)
-        elif isinstance(node, ast.Constant):
-            # Literal value
-            return node.value
-        elif isinstance(node, ast.BinOp):
-            # Binary operation
-            left = self.run_sync_expr(node.left)
-            right = self.run_sync_expr(node.right)
-            
-            # Handle operations
-            if isinstance(node.op, ast.Add):
-                return left + right
-            elif isinstance(node.op, ast.Sub):
-                return left - right
-            elif isinstance(node.op, ast.Mult):
-                return left * right
-            elif isinstance(node.op, ast.Div):
-                return left / right
-            # Add other operations as needed
-            
-        elif isinstance(node, ast.Call):
-            # Function call
-            func = self.run_sync_expr(node.func)
-            args = [self.run_sync_expr(arg) for arg in node.args]
-            kwargs = {kw.arg: self.run_sync_expr(kw.value) for kw in node.keywords}
-            
-            # Handle direct function calls
-            if callable(func):
-                return func(*args, **kwargs)
-            return None
-        
-        elif isinstance(node, ast.JoinedStr):
-            # Handle f-strings
-            parts = []
-            for value in node.values:
-                if isinstance(value, ast.Constant):
-                    parts.append(str(value.value))
-                elif isinstance(value, ast.FormattedValue):
-                    # Evaluate the expression inside the f-string
-                    expr_value = self.run_sync_expr(value.value)
-                    # Format it according to the conversion and format_spec if provided
-                    if value.conversion != -1:
-                        if value.conversion == 's':  # str
-                            expr_value = str(expr_value)
-                        elif value.conversion == 'r':  # repr
-                            expr_value = repr(expr_value)
-                        elif value.conversion == 'a':  # ascii
-                            expr_value = ascii(expr_value)
-                    
-                    # Apply format specifier if any
-                    if value.format_spec is not None:
-                        format_spec = self.run_sync_expr(value.format_spec)
-                        expr_value = format(expr_value, format_spec)
-                    
-                    parts.append(str(expr_value))
-            return ''.join(parts)
-        
-        elif isinstance(node, ast.FormattedValue):
-            # Handle individual formatted values
-            expr_value = self.run_sync_expr(node.value)
-            # Apply conversions and formatting
-            if node.conversion != -1:
-                if node.conversion == 's':  # str
-                    expr_value = str(expr_value)
-                elif node.conversion == 'r':  # repr
-                    expr_value = repr(expr_value)
-                elif node.conversion == 'a':  # ascii
-                    expr_value = ascii(expr_value)
-            return expr_value
-        
-        elif isinstance(node, ast.Attribute):
-            # Handle attribute access (obj.attr)
-            value = self.run_sync_expr(node.value)  # Get the object
-            attr = node.attr  # Get the attribute name
-            
-            # Safely get the attribute
-            if hasattr(value, attr):
-                return getattr(value, attr)
-            return None
-            
-        elif isinstance(node, ast.Subscript):
-            try:
-                # Handle subscripting
-                target = self.run_sync_expr(node.value)
-                
-                # Initialize result variable to prevent UnboundLocalError
-                result = None
-                
-                # Handle the slice operation based on the type of slice
-                if isinstance(node.slice, ast.Slice):
-                    # Process slice parts
-                    start = self.run_sync_expr(node.slice.lower) if node.slice.lower else None
-                    stop = self.run_sync_expr(node.slice.upper) if node.slice.upper else None
-                    step = self.run_sync_expr(node.slice.step) if node.slice.step else None
-                    
-                    # Create a slice object directly
-                    s = slice(start, stop, step)
-                    
-                    # Handle slice objects
-                    if isinstance(s, slice):
-                        try:
-                            logger = self.env_stack[0]["logger"]
-                            logger.debug(f"Processing slice object: {s}")
-                            if hasattr(target, '__getitem__'):
-                                result = target.__getitem__(s)
-                                logger.debug(f"Slice operation result: {result}")
-                                return result
-                            else:
-                                raise TypeError(f"Object of type {type(target).__name__} does not support indexing")
-                        except Exception as e:
-                            logger.debug(f"Slice operation failed: {e}")
-                            raise
-                else:
-                    # Normal subscript
-                    key = self.run_sync_expr(node.slice)
-                    
-                    # Call the __getitem__ method
-                    if hasattr(target, '__getitem__'):
-                        self.env_stack[0]["logger"].debug(f"Calling __getitem__ on {target} with key {key}")
-                        if callable(target.__getitem__):
-                            method = target.__getitem__
-                            if not hasattr(method, '__self__'):
-                                method = method.__get__(target, type(target))
-                        result = target.__getitem__(key)
-                        self.env_stack[0]["logger"].debug(f"__getitem__ returned: {result}")
-                        return result  # Ensure we return the slice result
-                    else:
-                        raise TypeError(f"Object of type {type(target).__name__} does not support indexing")
-                        
-                return result
-            except Exception as e:
-                # Let the exception propagate but wrapped with more context
-                from quantalogic_pythonbox.exceptions import WrappedException
-                # Extract line and column information from the node
-                lineno = getattr(node, 'lineno', 0)
-                col = getattr(node, 'col_offset', 0)
-                # Create a generic context line for the error message
-                context_line = "slice operation"
-                raise WrappedException(str(e), e, lineno, col, context_line) from e
-        
-        # For other node types, raise an exception
-        raise RuntimeError(f"Cannot synchronously evaluate expression type: {node.__class__.__name__}")
-
     async def visit_AugAssign(self, node: ast.AugAssign, wrap_exceptions: bool = True) -> Any:
-        # Handle augmented assignment (e.g., a += b)
         value = await self.visit(node.value, wrap_exceptions=wrap_exceptions)
         target = node.target
         if isinstance(target, ast.Name):
@@ -765,7 +462,7 @@ class ASTInterpreter:
             new_value = self._apply_binary_op(current, node.op, value)
             obj[key] = new_value
         else:
-            raise Exception(f"Unsupported target for AugAssign: {type(target)}")
+            raise Exception("Unsupported target for AugAssign: %s" % type(target))
         return None
 
     def _apply_binary_op(self, left, op, right):
@@ -787,33 +484,96 @@ class ASTInterpreter:
         for ast_op, func in ops.items():
             if isinstance(op, ast_op):
                 return func(left, right)
-        # Fallback: try built-in addition
         try:
             return left + right
         except Exception:
-            raise Exception(f"Unsupported operator in AugAssign: {op}")
+            raise Exception("Unsupported operator in AugAssign: %s" % op)
 
+    async def visit_Name(self, node: ast.Name) -> Any:
+        if node.id not in self.env_stack[-1]:
+            raise NameError("name '%s' is not defined" % node.id)
 
-class AsyncFunction:
-    async def __call__(self, *args: Any, _return_locals: bool = False, **kwargs: Any) -> Any:
-        pass
+    async def visit_Import(self, node: ast.Import, wrap_exceptions: bool = True) -> Any:
+        self.env_stack[0]['logger'].debug("Handling import of modules: %s" % str([alias.name for alias in node.names]))
+        for alias in node.names:
+            try:
+                module = self.safe_import(alias.name)
+                if alias.asname:
+                    self.set_variable(alias.asname, module)
+                else:
+                    self.set_variable(alias.name, module)
+            except ImportError as e:
+                self.env_stack[0]['logger'].debug("Import failed for %s: %s" % (alias.name, str(e)))
+                if wrap_exceptions:
+                    raise WrappedException("Import error: %s" % str(e), e) from e
+                else:
+                    raise
+        return None
 
+    async def visit_Try(self, node: ast.Try, wrap_exceptions: bool = True) -> Any:
+        self.env_stack[0]['logger'].debug("Entering visit_Try for node at line " + str(getattr(node, 'lineno', 'unknown')))
+        try:
+            self.env_stack[0]['logger'].debug("Executing try block")
+            for stmt in node.body:
+                stmt_result = await self.visit(stmt, wrap_exceptions=False)
+                self.env_stack[0]['logger'].debug("Executed statement in try block: " + str(stmt.__class__.__name__) + ", result: " + str(stmt_result))
+        except Exception as e:
+            self.env_stack[0]['logger'].debug("Exception caught in try block: type " + str(type(e).__name__) + ", message: " + str(e))
+            matched = False
+            for handler in node.handlers:
+                if handler.type:
+                    try:
+                        exc_type = await self.visit(handler.type, wrap_exceptions=False)
+                    except Exception as type_err:
+                        self.env_stack[0]['logger'].debug(f"Error resolving exception type: {type_err}")
+                        continue  # Skip this handler if type resolution fails
+                    self.env_stack[0]['logger'].debug("Checking handler for exception type: " + str(exc_type) + ", caught exception type: " + str(type(e).__name__))
+                    self.env_stack[0]['logger'].debug(f"Caught exception type: {type(e).__name__}, handler exception type: {exc_type}")
+                    self.env_stack[0]['logger'].debug(f"Checking if exception {e} is instance of {exc_type} or its cause if wrapped")
+                    self.env_stack[0]['logger'].debug(f"Resolved exc_type: {exc_type}, type of exc_type: {type(exc_type)}")
+                    self.env_stack[0]['logger'].debug(f"Caught exception: {e}, type of caught exception: {type(e)}")
+                    if isinstance(e, exc_type) or (isinstance(e, WrappedException) and isinstance(e.__cause__, exc_type)):
+                        self.env_stack[0]['logger'].debug("Exception matched, entering except block for handler at line " + str(getattr(handler, 'lineno', 'unknown')))
+                        if handler.name:
+                            self.set_variable(handler.name, e)
+                        for stmt in handler.body:
+                            stmt_result = await self.visit(stmt, wrap_exceptions=False)
+                            self.env_stack[0]['logger'].debug("Executed statement in except block: " + str(stmt.__class__.__name__) + ", result: " + str(stmt_result))
+                            if isinstance(stmt, ast.Return):
+                                return stmt_result
+                        matched = True
+                        break
+                else:  # Bare except
+                    self.env_stack[0]['logger'].debug("Entering bare except block")
+                    if handler.name:
+                        self.set_variable(handler.name, e)
+                    for stmt in handler.body:
+                        stmt_result = await self.visit(stmt, wrap_exceptions=False)
+                        self.env_stack[0]['logger'].debug("Executed statement in bare except block: " + str(stmt.__class__.__name__) + ", result: " + str(stmt_result))
+                        if isinstance(stmt, ast.Return):
+                            return stmt_result  # Early return if return statement is in except block
+                    matched = True
+                    break
+            if not matched:
+                self.env_stack[0]['logger'].debug("No handler matched, re-raising exception: " + str(type(e).__name__))
+                raise e
+        else:
+            self.env_stack[0]['logger'].debug("Try block completed without exceptions, executing orelse if present")
+            if node.orelse:
+                for stmt in node.orelse:
+                    stmt_result = await self.visit(stmt, wrap_exceptions=wrap_exceptions)
+                    self.env_stack[0]['logger'].debug("Executed statement in orelse block: " + str(stmt.__class__.__name__) + ", result: " + str(stmt_result))
+                    if isinstance(stmt, ast.Return):
+                        return stmt_result  # Early return if return statement is in orelse block
+        finally:
+            self.env_stack[0]['logger'].debug("Executing finally block if present")
+            if node.finalbody:
+                for stmt in node.finalbody:
+                    stmt_result = await self.visit(stmt, wrap_exceptions=wrap_exceptions)
+                    self.env_stack[0]['logger'].debug("Executed statement in finally block: " + str(stmt.__class__.__name__) + ", result: " + str(stmt_result))
+                    if isinstance(stmt, ast.Return):
+                        return stmt_result  # Early return if return statement is in finally block
 
-class AsyncExecutionResult:
-    def __init__(self, result: Any, error: Optional[str], execution_time: float, local_variables: Optional[Dict[str, Any]]):
-        self.result = result
-        self.error = error
-        self.execution_time = execution_time
-        self.local_variables = local_variables
-
-
-class EventLoopManager:
-    def __init__(self):
-        self.loop = asyncio.get_event_loop()
-
-    async def run_task(self, coro, timeout=None):
-        return await asyncio.wait_for(coro, timeout=timeout)
-
-
-event_loop_manager = EventLoopManager()
-timeout = 60
+    async def visit_Return(self, node: ast.Return, wrap_exceptions: bool = True) -> Any:
+        value = await self.visit(node.value, wrap_exceptions=wrap_exceptions)
+        return value

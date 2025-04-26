@@ -1,59 +1,70 @@
 import ast
+import asyncio
 from typing import Any
 
-from .exceptions import ReturnException
-from .interpreter_core import ASTInterpreter
 
-async def visit_With(self: ASTInterpreter, node: ast.With, wrap_exceptions: bool = True) -> Any:
+async def visit_With(interpreter, node: ast.With, wrap_exceptions: bool = True) -> Any:
+    from .exceptions import WrappedException
     result = None
     contexts = []
     for item in node.items:
-        ctx = await self.visit(item.context_expr, wrap_exceptions=wrap_exceptions)
-        val = ctx.__enter__()
-        contexts.append((ctx, val))
+        ctx = await interpreter.visit(item.context_expr, wrap_exceptions=True)
+        contexts.append(ctx)
+        if asyncio.iscoroutinefunction(getattr(ctx, '__aenter__', None)):
+            var = await ctx.__aenter__()
+        else:
+            var = ctx.__enter__()
         if item.optional_vars:
-            await self.assign(item.optional_vars, val)
+            await interpreter.assign(item.optional_vars, var)
     try:
         for stmt in node.body:
-            result = await self.visit(stmt, wrap_exceptions=wrap_exceptions)
-    except ReturnException as ret:
-        for ctx, _ in reversed(contexts):
-            ctx.__exit__(None, None, None)
-        raise ret
+            result = await interpreter.visit(stmt, wrap_exceptions=True)
     except Exception as e:
-        exc_type, exc_value, tb = type(e), e, e.__traceback__
-        for ctx, _ in reversed(contexts):
-            if not ctx.__exit__(exc_type, exc_value, tb):
-                raise
+        for ctx in reversed(contexts):
+            if asyncio.iscoroutinefunction(getattr(ctx, '__aexit__', None)):
+                await ctx.__aexit__(type(e), e, e.__traceback__)
+            else:
+                ctx.__exit__(type(e), e, e.__traceback__)
         raise
     else:
-        for ctx, _ in reversed(contexts):
-            ctx.__exit__(None, None, None)
+        for ctx in reversed(contexts):
+            if asyncio.iscoroutinefunction(getattr(ctx, '__aexit__', None)):
+                await ctx.__aexit__(None, None, None)
+            else:
+                ctx.__exit__(None, None, None)
     return result
 
-async def visit_AsyncWith(self: ASTInterpreter, node: ast.AsyncWith, wrap_exceptions: bool = True) -> Any:
+
+async def visit_AsyncWith(interpreter, node: ast.AsyncWith, wrap_exceptions: bool = True) -> Any:
+    from .exceptions import WrappedException
     result = None
-    contexts = []
     for item in node.items:
-        ctx = await self.visit(item.context_expr, wrap_exceptions=wrap_exceptions)
-        val = await ctx.__aenter__()
-        contexts.append((ctx, val))
+        ctx = await interpreter.visit(item.context_expr, wrap_exceptions=True)
+        if hasattr(ctx, '__aenter__'):
+            var = await ctx.__aenter__()
+        elif hasattr(ctx, '__enter__'):
+            var = ctx.__enter__()
+        else:
+            lineno = getattr(node, "lineno", 1)
+            col = getattr(node, "col_offset", 0)
+            context_line = interpreter.source_lines[lineno - 1] if interpreter.source_lines and lineno <= len(interpreter.source_lines) else ""
+            raise WrappedException(
+                f"Object {ctx} does not support async context management", TypeError(), lineno, col, context_line
+            )
         if item.optional_vars:
-            await self.assign(item.optional_vars, val)
+            await interpreter.assign(item.optional_vars, var)
     try:
         for stmt in node.body:
-            result = await self.visit(stmt, wrap_exceptions=wrap_exceptions)
-    except ReturnException as ret:
-        for ctx, _ in reversed(contexts):
-            await ctx.__aexit__(None, None, None)
-        raise ret
+            result = await interpreter.visit(stmt, wrap_exceptions=True)
     except Exception as e:
-        exc_type, exc_value, tb = type(e), e, e.__traceback__
-        for ctx, _ in reversed(contexts):
-            if not await ctx.__aexit__(exc_type, exc_value, tb):
-                raise
+        if hasattr(ctx, '__aexit__'):
+            await ctx.__aexit__(type(e), e, e.__traceback__)
+        elif hasattr(ctx, '__exit__'):
+            ctx.__exit__(type(e), e, e.__traceback__)
         raise
     else:
-        for ctx, _ in reversed(contexts):
+        if hasattr(ctx, '__aexit__'):
             await ctx.__aexit__(None, None, None)
+        elif hasattr(ctx, '__exit__'):
+            ctx.__exit__(None, None, None)
     return result

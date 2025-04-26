@@ -94,6 +94,7 @@ class Function:
 
         new_env_stack.append(local_frame)
         new_interp: ASTInterpreter = self.interpreter.spawn_from_env(new_env_stack)
+        new_interp.env_stack[0]['logger'].debug(f"Calling function {self.node.name}")
         
         if self.defining_class and args:
             new_interp.current_class = self.defining_class
@@ -117,21 +118,21 @@ class Function:
                 for stmt in self.node.body:
                     try:
                         if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Yield):
-                            value = await new_interp.visit(stmt.value.value, wrap_exceptions=True) if stmt.value.value else None
+                            value = await new_interp.visit(stmt.value.value, wrap_exceptions=False) if stmt.value.value else None
                             values.append(value)
                             continue
                             
                         if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.YieldFrom):
-                            iterable = await new_interp.visit(stmt.value.value, wrap_exceptions=True)
+                            iterable = await new_interp.visit(stmt.value.value, wrap_exceptions=False)
                             for val in iterable:
                                 values.append(val)
                             continue
                             
                         if isinstance(stmt, ast.Return):
-                            return_value = await new_interp.visit(stmt.value, wrap_exceptions=True) if stmt.value else None
+                            return_value = await new_interp.visit(stmt.value, wrap_exceptions=False) if stmt.value else None
                             break
                             
-                        await new_interp.visit(stmt, wrap_exceptions=True)
+                        await new_interp.visit(stmt, wrap_exceptions=False)
                         
                         if new_interp.generator_context.get('yielded'):
                             new_interp.generator_context['yielded'] = False
@@ -163,7 +164,7 @@ class Function:
             last_value = None
             try:
                 for stmt in self.node.body:
-                    last_value = await new_interp.visit(stmt, wrap_exceptions=True)
+                    last_value = await new_interp.visit(stmt, wrap_exceptions=False)
                 return last_value
             except ReturnException as ret:
                 return ret.value
@@ -220,7 +221,7 @@ class Function:
                         
                         if result is None:
                             # Handle case where no explicit return is found
-                            return "Slice(None,None,None)"
+                            return f"Custom slice: {key}"  # Return formatted string for custom slicing
                         return result
                     except Exception as e:
                         from quantalogic_pythonbox.exceptions import WrappedException

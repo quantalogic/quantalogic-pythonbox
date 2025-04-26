@@ -7,6 +7,7 @@ from .interpreter_core import ASTInterpreter
 async def visit_BinOp(self: ASTInterpreter, node: ast.BinOp, wrap_exceptions: bool = True) -> Any:
     left: Any = await self.visit(node.left, wrap_exceptions=wrap_exceptions)
     right: Any = await self.visit(node.right, wrap_exceptions=wrap_exceptions)
+    self.env_stack[0]['logger'].debug(f"BinOp operands: left={left}, right={right}, operation={node.op.__class__.__name__}")
     op = node.op
     if isinstance(op, ast.Add):
         return left + right
@@ -17,8 +18,14 @@ async def visit_BinOp(self: ASTInterpreter, node: ast.BinOp, wrap_exceptions: bo
     elif isinstance(op, ast.Mult):
         return left * right
     elif isinstance(op, ast.Div):
+        if right == 0:
+            self.env_stack[0]['logger'].debug("Raising ZeroDivisionError for Div operation")
+            raise ZeroDivisionError("division by zero")
         return left / right
     elif isinstance(op, ast.FloorDiv):
+        if right == 0:
+            self.env_stack[0]['logger'].debug("Raising ZeroDivisionError for FloorDiv operation")
+            raise ZeroDivisionError("division by zero")
         return left // right
     elif isinstance(op, ast.Mod):
         return left % right

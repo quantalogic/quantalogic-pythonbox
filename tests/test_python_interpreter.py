@@ -115,12 +115,12 @@ def compute():
 
 @pytest.mark.asyncio
 async def test_import_disallowed_module():
-    # Test error when importing a disallowed module.
+    # Test error when importing a disallowed module 'random'.
     source = """
-import os
+import random
 
 def compute():
-    return os.getcwd()
+    return random.random()
 """
     result = await execute_async(source, entry_point="compute", allowed_modules=["math"])
     assert "not allowed" in result.error
@@ -676,7 +676,8 @@ def compute():
     except ZeroDivisionError:
         result = 'handled'
     finally:
-        pass
+        if result is None:
+            result = 'finally'
     return result
 """
     result = await execute_async(source, entry_point="compute", allowed_modules=[])

@@ -1,28 +1,27 @@
 import ast
 from typing import Any
 
-from .interpreter_core import ASTInterpreter
 
-async def visit_Assign(self: ASTInterpreter, node: ast.Assign, wrap_exceptions: bool = True) -> None:
-    value: Any = await self.visit(node.value, wrap_exceptions=wrap_exceptions)
+async def visit_Assign(interpreter, node: ast.Assign, wrap_exceptions: bool = True) -> None:
+    value: Any = await interpreter.visit(node.value, wrap_exceptions=wrap_exceptions)
     for target in node.targets:
         if isinstance(target, ast.Subscript):
-            obj = await self.visit(target.value, wrap_exceptions=wrap_exceptions)
-            key = await self.visit(target.slice, wrap_exceptions=wrap_exceptions)
-            # Support CustomSlice by converting to built-in slice
-            from quantalogic_pythonbox.slice_utils import CustomSlice
+            obj = await interpreter.visit(target.value, wrap_exceptions=wrap_exceptions)
+            key = await interpreter.visit(target.slice, wrap_exceptions=wrap_exceptions)
+            from .slice_utils import CustomSlice
             if isinstance(key, CustomSlice):
                 key = slice(key.start, key.stop, key.step)
             obj[key] = value
         else:
-            await self.assign(target, value)
+            await interpreter.assign(target, value)
 
-async def visit_AugAssign(self: ASTInterpreter, node: ast.AugAssign, wrap_exceptions: bool = True) -> Any:
+
+async def visit_AugAssign(interpreter, node: ast.AugAssign, wrap_exceptions: bool = True) -> Any:
     if isinstance(node.target, ast.Name):
-        current_val: Any = self.get_variable(node.target.id)
+        current_val: Any = interpreter.get_variable(node.target.id)
     else:
-        current_val: Any = await self.visit(node.target, wrap_exceptions=wrap_exceptions)
-    right_val: Any = await self.visit(node.value, wrap_exceptions=wrap_exceptions)
+        current_val: Any = await interpreter.visit(node.target, wrap_exceptions=wrap_exceptions)
+    right_val: Any = await interpreter.visit(node.value, wrap_exceptions=wrap_exceptions)
     op = node.op
     if isinstance(op, ast.Add):
         result: Any = current_val + right_val
@@ -50,20 +49,21 @@ async def visit_AugAssign(self: ASTInterpreter, node: ast.AugAssign, wrap_except
         result = current_val >> right_val
     else:
         raise Exception("Unsupported augmented operator: " + str(op))
-    await self.assign(node.target, result)
+    await interpreter.assign(node.target, result)
     return result
 
-async def visit_AnnAssign(self: ASTInterpreter, node: ast.AnnAssign, wrap_exceptions: bool = True) -> None:
-    value = await self.visit(node.value, wrap_exceptions=wrap_exceptions) if node.value else None
-    if not self.ignore_typing:
-        # Only evaluate and store annotation if ignore_typing is False
-        annotation = await self.visit(node.annotation, wrap_exceptions=True)
-        if isinstance(node.target, ast.Name):
-            self.type_hints[node.target.id] = annotation
-    if value is not None or node.simple:
-        await self.assign(node.target, value)
 
-async def visit_NamedExpr(self: ASTInterpreter, node: ast.NamedExpr, wrap_exceptions: bool = True) -> Any:
-    value = await self.visit(node.value, wrap_exceptions=wrap_exceptions)
-    await self.assign(node.target, value)
+async def visit_AnnAssign(interpreter, node: ast.AnnAssign, wrap_exceptions: bool = True) -> None:
+    value = await interpreter.visit(node.value, wrap_exceptions=wrap_exceptions) if node.value else None
+    if not interpreter.ignore_typing:
+        annotation = await interpreter.visit(node.annotation, wrap_exceptions=True)
+        if isinstance(node.target, ast.Name):
+            interpreter.type_hints[node.target.id] = annotation
+    if value is not None or node.simple:
+        await interpreter.assign(node.target, value)
+
+
+async def visit_NamedExpr(interpreter, node: ast.NamedExpr, wrap_exceptions: bool = True) -> Any:
+    value = await interpreter.visit(node.value, wrap_exceptions=wrap_exceptions)
+    await interpreter.assign(node.target, value)
     return value

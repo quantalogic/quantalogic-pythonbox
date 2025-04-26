@@ -10,6 +10,13 @@ logging.basicConfig(level=logging.DEBUG)  # Set debug level
 # Configure logging
 logger = logging.getLogger(__name__)
 
+async def async_enumerate(async_iterable, start=0):
+    """Async-compatible enumerate for async iterables."""
+    index = start
+    async for item in async_iterable:
+        yield index, item
+        index += 1
+
 async def visit_If(self: ASTInterpreter, node: ast.If, wrap_exceptions: bool = True) -> Any:
     logger.debug("Visiting If")
     if await self.visit(node.test, wrap_exceptions=wrap_exceptions):
@@ -80,19 +87,35 @@ async def visit_AsyncFor(self: ASTInterpreter, node: ast.AsyncFor, wrap_exceptio
     iterable = await self.visit(node.iter, wrap_exceptions=wrap_exceptions)
     broke = False
     if hasattr(iterable, '__aiter__'):
-        async for value in iterable:
-            logger.debug(f"AsyncFor iteration with value: {value}")
-            await self.assign(node.target, value)
-            try:
-                for stmt in node.body:
-                    await self.visit(stmt, wrap_exceptions=wrap_exceptions)
-            except BreakException:
-                logger.debug("Break in AsyncFor")
-                broke = True
-                break
-            except ContinueException:
-                logger.debug("Continue in AsyncFor")
-                continue
+        # Check if the target is a tuple for enumeration
+        if isinstance(node.target, ast.Tuple) and len(node.target.elts) == 2:
+            async for index, value in async_enumerate(iterable, start=1):
+                logger.debug(f"AsyncFor iteration with index: {index}, value: {value}")
+                await self.assign(node.target, (index, value))
+                try:
+                    for stmt in node.body:
+                        await self.visit(stmt, wrap_exceptions=wrap_exceptions)
+                except BreakException:
+                    logger.debug("Break in AsyncFor")
+                    broke = True
+                    break
+                except ContinueException:
+                    logger.debug("Continue in AsyncFor")
+                    continue
+        else:
+            async for value in iterable:
+                logger.debug(f"AsyncFor iteration with value: {value}")
+                await self.assign(node.target, value)
+                try:
+                    for stmt in node.body:
+                        await self.visit(stmt, wrap_exceptions=wrap_exceptions)
+                except BreakException:
+                    logger.debug("Break in AsyncFor")
+                    broke = True
+                    break
+                except ContinueException:
+                    logger.debug("Continue in AsyncFor")
+                    continue
     else:
         raise TypeError(f"Object {iterable} is not an async iterable")
     if not broke:
