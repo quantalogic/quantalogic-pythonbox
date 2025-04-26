@@ -40,10 +40,13 @@ async def visit_Assert(self: ASTInterpreter, node: ast.Assert, wrap_exceptions: 
         raise AssertionError(msg)
 
 async def visit_Yield(self: ASTInterpreter, node: ast.Yield, wrap_exceptions: bool = True) -> Any:
-    logger.debug("Visiting Yield")
     if node.value:
-        return await self.visit(node.value, wrap_exceptions=wrap_exceptions)
-    return None
+        evaluated_value = await self.visit(node.value, wrap_exceptions=wrap_exceptions)
+        logger.debug(f"Yielding evaluated value: {evaluated_value}, type: {type(evaluated_value)}")
+        return evaluated_value
+    else:
+        logger.debug("Yielding None")
+        return None
 
 async def visit_YieldFrom(self: ASTInterpreter, node: ast.YieldFrom, wrap_exceptions: bool = True) -> Any:
     logger.debug("Visiting YieldFrom")

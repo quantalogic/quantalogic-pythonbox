@@ -336,8 +336,8 @@ class ASTInterpreter:
                 if name in self.var_cache:
                     del self.var_cache[name]
 
-    async def assign(self, target: ast.AST, value: Any) -> None:
-        self.env_stack[0]['logger'].debug(f"Assigning value {value} to target {target.__class__.__name__} in scope: {self.env_stack[-1].keys()} ")
+    async def assign(self, target: ast.AST, value: Any, wrap_exceptions: bool = True) -> None:
+        self.env_stack[0]['logger'].debug(f"Assigning value {value} of type {type(value)} to target of type {type(target)}")
         if isinstance(target, ast.Name):
             self.set_variable(target.id, value)
         elif isinstance(target, (ast.Tuple, ast.List)):
@@ -496,9 +496,13 @@ class ASTInterpreter:
         except Exception:
             raise Exception("Unsupported operator in AugAssign: %s" % op)
 
-    async def visit_Name(self, node: ast.Name) -> Any:
-        if node.id not in self.env_stack[-1]:
-            raise NameError("name '%s' is not defined" % node.id)
+    async def visit_Name(self, node: ast.Name, wrap_exceptions: bool = True) -> Any:
+        logger = self.env_stack[0]['logger']
+        value = self.env_stack[-1].get(node.id, None)
+        logger.debug(f"Visiting name: {node.id}, retrieved value: {value}, type: {type(value) if value is not None else 'NoneType'}, wrap_exceptions: {wrap_exceptions}")
+        if value is None and wrap_exceptions:
+            raise NameError(f"name '{node.id}' is not defined")
+        return value
 
     async def visit_Import(self, node: ast.Import, wrap_exceptions: bool = True) -> Any:
         self.env_stack[0]['logger'].debug("Handling import of modules: %s" % str([alias.name for alias in node.names]))
@@ -600,3 +604,10 @@ class ASTInterpreter:
 
     async def run_sync_expr(self, expr: ast.expr) -> Any:
         return await self.visit(expr, wrap_exceptions=True)
+
+    async def visit_Tuple(self, node: ast.Tuple, wrap_exceptions: bool = True) -> tuple:
+        self.env_stack[0]['logger'].debug(f"Evaluating Tuple with {len(node.elts)} elements")
+        elements = [await self.visit(elt, wrap_exceptions=wrap_exceptions) for elt in node.elts]
+        tuple_value = tuple(elements)
+        self.env_stack[0]['logger'].debug(f"Tuple evaluated to {tuple_value}")
+        return tuple_value
