@@ -672,19 +672,18 @@ def compute():
     assert result.result == []
 
 
-@pytest.mark.asyncio
-async def test_generator_with_return():
-    """Test generator with return value via StopIteration."""
-    source = """
+def test_generator_with_return():
+    code = """
 def gen():
     yield 1
     return 2
-def compute():
+
+def main():
     g = gen()
-    return (next(g), next(g, None))
+    return next(g), next(g, None)
 """
-    result = await execute_async(source, entry_point="compute", allowed_modules=[])
-    assert result.result == (1, 2)
+    result = execute_async(code, entry_point="main")
+    assert result.result == (1, None)  # Correct expectation per Python semantics
 
 
 @pytest.mark.asyncio

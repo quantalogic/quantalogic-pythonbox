@@ -179,7 +179,10 @@ async def visit_Call(self: ASTInterpreter, node: ast.Call, is_await_context: boo
         if func.node.name == "__init__":
             await func(*evaluated_args, **kwargs)
             return None
-        result = await func(*evaluated_args, **kwargs)
+        if func.is_generator:
+            result = await func(*evaluated_args, **kwargs)  # Await generator coroutine
+        else:
+            result = await func(*evaluated_args, **kwargs)
     else:
         result = func(*evaluated_args, **kwargs)
         if asyncio.iscoroutine(result) and not is_await_context:

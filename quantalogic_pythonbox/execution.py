@@ -20,36 +20,6 @@ class AsyncExecutionResult:
     execution_time: float
     local_variables: Optional[Dict[str, Any]] = None
 
-def optimize_ast(tree: ast.AST) -> ast.AST:
-    """Perform constant folding and basic optimizations on the AST."""
-    class ConstantFolder(ast.NodeTransformer):
-        def visit_BinOp(self, node):
-            self.generic_visit(node)
-            if isinstance(node.left, ast.Constant) and isinstance(node.right, ast.Constant):
-                left, right = node.left.value, node.right.value
-                if isinstance(left, (int, float)) and isinstance(right, (int, float)):
-                    if isinstance(node.op, ast.Add):
-                        return ast.Constant(value=left + right)
-                    elif isinstance(node.op, ast.Sub):
-                        return ast.Constant(value=left - right)
-                    elif isinstance(node.op, ast.Mult):
-                        return ast.Constant(value=left * right)
-                    elif isinstance(node.op, ast.Div) and right != 0:
-                        return ast.Constant(value=left / right)
-            return node
-
-        def visit_If(self, node):
-            self.generic_visit(node)
-            if isinstance(node.test, ast.Constant):
-                # Constant condition: inline the relevant branch
-                if node.test.value:
-                    return node.body
-                else:
-                    return node.orelse
-            return node
-
-    return ConstantFolder().visit(tree)
-
 class ControlledEventLoop:
     """Encapsulated event loop management to prevent unauthorized access"""
     def __init__(self):
@@ -77,7 +47,7 @@ class ControlledEventLoop:
     async def run_task(self, coro, timeout: float) -> Any:
         return await asyncio.wait_for(coro, timeout=timeout)
 
-async def execute_async(
+async def _async_execute_async(
     code: str,
     entry_point: Optional[str] = None,
     args: Optional[Tuple] = None,
@@ -102,7 +72,7 @@ async def execute_async(
     
     try:
         dedented_code = textwrap.dedent(code).strip()  # Use dedented code for consistency
-        ast_tree = optimize_ast(ast.parse(dedented_code))
+        ast_tree = ast.parse(dedented_code)
         loop = await event_loop_manager.get_loop()
         
         # Prepare execution namespace
@@ -160,7 +130,6 @@ async def execute_async(
                     # Handle other exceptions
                     result = str(e)
                 local_vars = {}
-
             elif isinstance(func, Function):
                 if func.is_generator:
                     try:
@@ -201,11 +170,19 @@ async def execute_async(
                             import re
                             value_match = re.search(r"StopIteration\('([^']*)'\)", str(ex))
                             if value_match:
+                                # We found a value in the StopIteration
                                 result = value_match.group(1)
-                            else:
-                                # Default fallback for generators with return values
-                                result = "done"
-                            local_vars = {}
+                                # Remove quotes if the value is a string
+                                if result.startswith("'") and result.endswith("'"):
+                                    result = result[1:-1]
+                                elif result.startswith('"') and result.endswith('"'):
+                                    result = result[1:-1]
+                                
+                                return AsyncExecutionResult(
+                                    result=result,
+                                    error=None,
+                                    execution_time=time.time() - start_time
+                                )
                         # Handle StopAsyncIteration directly
                         elif isinstance(ex, StopAsyncIteration):
                             # For empty async generators, propagate the "Empty generator" message
@@ -318,8 +295,31 @@ async def execute_async(
     finally:
         await event_loop_manager.cleanup()
 
+def execute_async(
+    code: str,
+    entry_point: Optional[str] = None,
+    args: Optional[Tuple] = None,
+    kwargs: Optional[Dict[str, Any]] = None,
+    timeout: float = 30,
+    allowed_modules: Optional[List[str]] = None,
+    namespace: Optional[Dict[str, Any]] = None,
+    max_memory_mb: int = 1024,
+    ignore_typing: bool = False
+) -> AsyncExecutionResult:
+    """
+    Wrapper for execute_async supporting both sync and async usage.
+    Returns coroutine if in async context, else runs via asyncio.run.
+    """
+    coro = _async_execute_async(
+        code, entry_point, args, kwargs, timeout, allowed_modules, namespace, max_memory_mb, ignore_typing
+    )
+    try:
+        asyncio.get_running_loop()
+        return coro
+    except RuntimeError:
+        return asyncio.run(coro)
+
 def interpret_ast(ast_tree: ast.AST, allowed_modules: List[str], source: str = "", restrict_os: bool = False, namespace: Optional[Dict[str, Any]] = None) -> Any:
-    ast_tree = optimize_ast(ast_tree)
     event_loop_manager = ControlledEventLoop()
     
     safe_namespace = namespace.copy() if namespace else {}
