@@ -72,7 +72,7 @@ async def visit_AsyncFunctionDef(interpreter, node: ast.AsyncFunctionDef, wrap_e
         has_yield = contains_yield(node)
         if has_yield:
             logger.debug(f"Detected async generator function: {node.name}")
-            logger.debug(f"Creating AsyncGeneratorFunction for {node.name}")
+            logger.debug(f"Creating AsyncGeneratorFunction for {node.name}, generator_context active: {interpreter.generator_context.get('active', False)}")
             from .async_generator import AsyncGeneratorFunction
             func = AsyncGeneratorFunction(node, interpreter.env_stack, interpreter, pos_kw_params, vararg_name, kwonly_params, kwarg_name, pos_defaults, kw_defaults)
         else:

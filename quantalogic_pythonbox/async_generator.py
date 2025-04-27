@@ -6,6 +6,7 @@ Async generator function handling for the PythonBox interpreter.
 import ast
 import logging
 from typing import Any, Dict, List, Optional
+import asyncio
 
 from .interpreter_core import ASTInterpreter
 from .exceptions import ReturnException
@@ -32,38 +33,50 @@ class AsyncGeneratorFunction:
         self.logger = logging.getLogger(__name__)
 
     async def gen(self):
-        self.logger.debug(f"Async generator gen started for {self.node.name}")
+        self.logger.debug(f"Entering gen method for {self.node.name}")
         try:
             for stmt in self.node.body:
                 self.logger.debug(f"Executing statement in gen: {stmt.__class__.__name__}")
                 if isinstance(stmt, ast.Assign) and isinstance(stmt.value, ast.Yield):
                     yield_value = await self.interpreter.visit(stmt.value.value)
-                    self.logger.debug(f"Yielding in gen: {yield_value}")
+                    self.logger.debug(f"Yielding value in gen: {yield_value}, type: {type(yield_value).__name__}, active: {self.interpreter.generator_context.get('active', False)}")
                     sent_value = yield yield_value
-                    self.logger.debug(f"Received in gen: {sent_value}")
+                    self.logger.debug(f"Received sent value in gen: {sent_value}")
                     target = stmt.targets[0]
                     if isinstance(target, ast.Name):
-                        await self.interpreter.set_variable(target.id, sent_value)
+                        # Set variable without awaiting, as set_variable is synchronous
+                        self.interpreter.set_variable(target.id, sent_value)
                         self.logger.debug(f"Assigned sent value to variable '{target.id}': {sent_value}, type: {type(sent_value).__name__}")
                     else:
                         raise Exception(f"Unsupported target type for yield assignment: {target.__class__.__name__}")
                 elif isinstance(stmt, ast.Assign) and isinstance(stmt.value, ast.YieldFrom):
                     yield_from_value = await self.interpreter.visit(stmt.value.value)
                     async for item in yield_from_value:
-                        self.logger.debug(f"Yielding from item: {item}")
+                        self.logger.debug(f"Yielding from item in gen: {item}, type: {type(item).__name__}, active: {self.interpreter.generator_context.get('active', False)}")
                         sent_value = yield item
-                        self.logger.debug(f"Received sent value: {sent_value}")
+                        self.logger.debug(f"Received sent value in gen: {sent_value}")
+                elif isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Yield):
+                    yield_value = await self.interpreter.visit(stmt.value.value)
+                    self.logger.debug(f"Yielding value in gen: {yield_value}, type: {type(yield_value).__name__}, active: {self.interpreter.generator_context.get('active', False)}")
+                    sent_value = yield yield_value
+                    self.logger.debug(f"Received sent value in gen: {sent_value}")
+                elif isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.YieldFrom):
+                    yield_from_value = await self.interpreter.visit(stmt.value.value)
+                    async for item in yield_from_value:
+                        self.logger.debug(f"Yielding from item in gen: {item}, type: {type(item).__name__}, active: {self.interpreter.generator_context.get('active', False)}")
+                        sent_value = yield item
+                        self.logger.debug(f"Received sent value in gen: {sent_value}")
                 elif isinstance(stmt, ast.Yield):
                     yield_value = await self.interpreter.visit(stmt.value)
-                    self.logger.debug(f"Yielding in gen: {yield_value}")
+                    self.logger.debug(f"Yielding value in gen: {yield_value}, type: {type(yield_value).__name__}, active: {self.interpreter.generator_context.get('active', False)}")
                     sent_value = yield yield_value
-                    self.logger.debug(f"Received in gen: {sent_value}")
+                    self.logger.debug(f"Received sent value in gen: {sent_value}")
                 elif isinstance(stmt, ast.YieldFrom):
                     yield_from_value = await self.interpreter.visit(stmt.value)
                     async for item in yield_from_value:
-                        self.logger.debug(f"Yielding from item: {item}")
+                        self.logger.debug(f"Yielding from item in gen: {item}, type: {type(item).__name__}, active: {self.interpreter.generator_context.get('active', False)}")
                         sent_value = yield item
-                        self.logger.debug(f"Received sent value: {sent_value}")
+                        self.logger.debug(f"Received sent value in gen: {sent_value}")
                 else:
                     await self.interpreter.visit(stmt, wrap_exceptions=True)
         except ReturnException as ret:
@@ -102,54 +115,70 @@ class AsyncGeneratorFunction:
         new_interp = self.interpreter.spawn_from_env(self.closure + [local_frame])
         self.interpreter = new_interp  # Update interpreter if needed
 
-        class AsyncGenerator:
-            def __init__(self, gen_coroutine, gen_name):
-                self.gen_coroutine = gen_coroutine
-                self.gen_name = gen_name
-                self.logger = logging.getLogger(__name__)
-
-            async def __anext__(self):
-                self.logger.debug(f"__anext__ called for generator {self.gen_name}, attempting asend(None)")
-                try:
-                    value = await self.gen_coroutine.asend(None)
-                    self.logger.debug(f"__anext__ yielded value: {value}, type: {type(value).__name__}")
-                    self.logger.debug(f"__anext__ call details: generator={self.gen_name}, value={value}")
-                    return value
-                except StopAsyncIteration as e:
-                    self.logger.debug(f"__anext__ raised StopAsyncIteration for generator {self.gen_name}, value: {getattr(e, 'value', 'No value')}")
-                    raise
-                except Exception as exc:
-                    self.logger.error(f"Exception in __anext__ for generator {self.gen_name}: {str(exc)}, type: {type(exc).__name__}")
-                    raise
-
-            async def asend(self, value):
-                self.logger.debug(f"asend called for generator {self.gen_name}, sending value: {value}")
-                try:
-                    result = await self.gen_coroutine.asend(value)
-                    self.logger.debug(f"asend yielded value: {result}")
-                    return result
-                except StopAsyncIteration as e:
-                    raise
-                except Exception as exc:
-                    self.logger.error(f"Exception in asend for generator {self.gen_name}: {str(exc)}")
-                    raise
-
-            async def athrow(self, exc):
-                self.logger.debug(f"athrow called for generator {self.gen_name}, throwing exception: {exc}")
-                try:
-                    result = await self.gen_coroutine.athrow(exc)
-                    self.logger.debug(f"athrow yielded value: {result}")
-                    return result
-                except StopAsyncIteration as e:
-                    raise
-                except Exception as err:
-                    self.logger.error(f"Exception in athrow for generator {self.gen_name}: {str(err)}")
-                    raise
-
-            def __aiter__(self):
-                return self
-
+        # Set up generator_context for proper yield and send handling in async generators
+        self.interpreter.generator_context = {'yield_queue': asyncio.Queue(), 'sent_queue': asyncio.Queue(), 'active': True}
         gen_coroutine = self.gen()
-        async_gen_instance = AsyncGenerator(gen_coroutine, self.node.name)
+        self.logger.debug(f"gen_coroutine type in __call__: {type(gen_coroutine).__name__}")
+        async_gen_instance = AsyncGenerator(gen_coroutine, self.node.name, self.interpreter)
         self.logger.debug(f"Returning AsyncGenerator instance for {self.node.name}")
         return async_gen_instance
+
+class AsyncGenerator:
+    def __init__(self, gen_coroutine, gen_name, interpreter):
+        self.gen_coroutine = gen_coroutine
+        self.gen_name = gen_name
+        self.interpreter = interpreter
+        self.logger = logging.getLogger(__name__)
+
+    async def __anext__(self):
+        self.interpreter.generator_context['active'] = True
+        self.logger.debug(f"gen_coroutine type: {type(self.gen_coroutine).__name__}")
+        self.logger.debug(f"__anext__ called for generator {self.gen_name}, attempting asend(None)")
+        try:
+            value = await self.gen_coroutine.asend(None)
+            self.logger.debug(f"__anext__ yielded value: {value}, type: {type(value).__name__}")
+            self.logger.debug(f"__anext__ call details: generator={self.gen_name}, value={value}")
+            return value
+        except StopAsyncIteration as e:
+            self.logger.debug(f"__anext__ raised StopAsyncIteration for generator {self.gen_name}, value: {getattr(e, 'value', 'No value')}")
+            raise
+        except Exception as exc:
+            self.logger.error(f"Exception in __anext__ for generator {self.gen_name}: {str(exc)}, type: {type(exc).__name__}")
+            raise
+        finally:
+            self.interpreter.generator_context['active'] = False
+
+    async def asend(self, value):
+        self.interpreter.generator_context['active'] = True
+        self.logger.debug(f"gen_coroutine type: {type(self.gen_coroutine).__name__}")
+        self.logger.debug(f"asend called for generator {self.gen_name}, sending value: {value}")
+        try:
+            result = await self.gen_coroutine.asend(value)
+            self.logger.debug(f"asend yielded value: {result}")
+            return result
+        except StopAsyncIteration:
+            raise
+        except Exception as exc:
+            self.logger.error(f"Exception in asend for generator {self.gen_name}: {str(exc)}")
+            raise
+        finally:
+            self.interpreter.generator_context['active'] = False
+
+    async def athrow(self, exc):
+        self.interpreter.generator_context['active'] = True
+        self.logger.debug(f"gen_coroutine type: {type(self.gen_coroutine).__name__}")
+        self.logger.debug(f"athrow called for generator {self.gen_name}, throwing exception: {exc}")
+        try:
+            result = await self.gen_coroutine.athrow(exc)
+            self.logger.debug(f"athrow yielded value: {result}")
+            return result
+        except StopAsyncIteration:
+            raise
+        except Exception as err:
+            self.logger.error(f"Exception in athrow for generator {self.gen_name}: {str(err)}")
+            raise
+        finally:
+            self.interpreter.generator_context['active'] = False
+
+    def __aiter__(self):
+        return self

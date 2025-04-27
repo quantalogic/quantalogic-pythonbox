@@ -49,8 +49,10 @@ async def visit_Yield(self: ASTInterpreter, node: ast.Yield, wrap_exceptions: bo
         return None
 
 async def visit_YieldFrom(self: ASTInterpreter, node: ast.YieldFrom, wrap_exceptions: bool = True) -> Any:
-    logger.debug("Visiting YieldFrom")
+    logger.debug(f"Entering visit_YieldFrom, generator_context present: {'yield_queue' in self.generator_context}")
+    logger.debug(f"Generator context active: {self.generator_context.get('active', False)}")
     iterable = await self.visit(node.value, wrap_exceptions=wrap_exceptions)
+    logger.debug(f"Iterable type in visit_YieldFrom: {type(iterable).__name__}")
     if 'yield_queue' in self.generator_context and self.generator_context.get('active', False):
         if hasattr(iterable, '__aiter__'):
             logger.debug("Handling async iterable in YieldFrom")

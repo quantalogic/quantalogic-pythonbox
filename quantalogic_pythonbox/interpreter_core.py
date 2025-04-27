@@ -2,6 +2,7 @@ import ast
 import logging
 import threading
 from typing import Any, Dict, List, Optional, Callable
+import asyncio
 
 import json
 import math
@@ -57,6 +58,8 @@ class ASTInterpreter:
         self.ignore_typing: bool = ignore_typing
         
         self.generator_context = {
+            'yield_queue': asyncio.Queue(),
+            'sent_queue': asyncio.Queue(),
             'active': False,
             'yielded': False,
             'yield_value': None, 

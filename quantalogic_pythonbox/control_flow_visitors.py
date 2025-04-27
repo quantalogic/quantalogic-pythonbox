@@ -86,6 +86,7 @@ async def visit_For(self: ASTInterpreter, node: ast.For, wrap_exceptions: bool =
 async def visit_AsyncFor(self: ASTInterpreter, node: ast.AsyncFor, wrap_exceptions: bool = True) -> None:
     iter_obj = await self.visit(node.iter, wrap_exceptions=wrap_exceptions)
     logger.debug(f"Visit_AsyncFor called for node at line {node.lineno if hasattr(node, 'lineno') else 'unknown'}, iterable after visit: {type(iter_obj).__name__}, value: {iter_obj if isinstance(iter_obj, (int, str, list, dict)) else type(iter_obj)}")
+    logger.debug(f"Generator context active: {self.generator_context.get('active', False)}")
     iterable = iter_obj
     logger.debug(f"AsyncFor iterable type: {type(iterable).__name__}")
     if not hasattr(iterable, '__aiter__'):
@@ -98,7 +99,8 @@ async def visit_AsyncFor(self: ASTInterpreter, node: ast.AsyncFor, wrap_exceptio
         try:
             logger.debug(f"Calling __anext__ on iterator of type {type(iterator).__name__}")
             value = await iterator.__anext__()
-            logger.debug(f"Received value from __anext__: {value}, type: {type(value).__name__}")
+            logger.debug(f"Received value from __anext__: {value}, active: {self.generator_context.get('active', False)}")
+            await self.visit(node.target, value=value, wrap_exceptions=wrap_exceptions)
         except StopAsyncIteration:
             logger.debug("__anext__ raised StopAsyncIteration, breaking loop")
             break
