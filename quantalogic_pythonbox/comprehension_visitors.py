@@ -15,28 +15,26 @@ async def visit_ListComp(interpreter, node: ast.ListComp, wrap_exceptions: bool 
         logger.debug(f"Retrieved iterable for single generator: {iterable if iterable else 'None'}, type: {type(iterable) if iterable else 'NoneType'}")
         logger.debug(f"Retrieved iterable of type {type(iterable)} for single generator, has __aiter__: {hasattr(iterable, '__aiter__')}, has __anext__: {hasattr(iterable, '__anext__')}")
         if hasattr(iterable, '__aiter__'):
-            logger.debug("Starting async for loop for single generator")
+            logger.debug("Detected async generator for single generator, draining into list")
+            drained = []
             try:
                 async for item in iterable:
-                    logger.debug(f"Starting async for loop for single generator, item: {item if item else 'None'}, type: {type(item) if item else 'NoneType'}")
-                    logger.debug(f"Starting iteration over item {item} from async iterable, item type: {type(item)}")
-                    new_frame = interpreter.env_stack[-1].copy()
-                    interpreter.env_stack.append(new_frame)
-                    await interpreter.assign(comp.target, item)
-                    logger.debug(f"After assignment for single generator, scope keys: {list(interpreter.env_stack[-1].keys())}, target {comp.target.id if isinstance(comp.target, ast.Name) else 'complex target'} present: {comp.target.id in interpreter.env_stack[-1] if isinstance(comp.target, ast.Name) else 'N/A' }")
-                    logger.debug(f"Assigned item {item} to target for single generator, item type: {type(item)}")
-                    conditions = [await interpreter.visit(if_clause, wrap_exceptions=True) for if_clause in comp.ifs] if comp.ifs else [True]
-                    logger.debug(f"Conditions for single generator: {conditions}, all true? {all(conditions)}")
-                    if all(conditions):
-                        logger.debug(f"Evaluating elt for single generator, scope keys: {list(interpreter.env_stack[-1].keys())}")
-                        value = await interpreter.visit(node.elt, wrap_exceptions=wrap_exceptions)
-                        logger.debug(f"Element to append in list comp: {value}, type: {type(value)}")
-                        result.append(value)
-                        logger.debug(f"Appended value: {value}, type: {type(value)}, result_id: {id(result)}")
-                    interpreter.env_stack.pop()
+                    drained.append(item)
             except Exception as e:
-                logger.error(f"Exception in async for loop for single generator: {str(e)}")
+                logger.error(f"Error draining async generator: {str(e)}")
                 raise
+            for item in drained:
+                logger.debug(f"Processing drained item {item}, type: {type(item)}")
+                new_frame = interpreter.env_stack[-1].copy()
+                interpreter.env_stack.append(new_frame)
+                await interpreter.assign(comp.target, item)
+                logger.debug(f"After assignment for single generator, scope keys: {list(interpreter.env_stack[-1].keys())}, target {comp.target.id if isinstance(comp.target, ast.Name) else 'complex target'} present: {comp.target.id in interpreter.env_stack[-1] if isinstance(comp.target, ast.Name) else 'N/A' }")
+                conditions = [await interpreter.visit(if_clause, wrap_exceptions=True) for if_clause in comp.ifs] if comp.ifs else [True]
+                if all(conditions):
+                    value = await interpreter.visit(node.elt, wrap_exceptions=wrap_exceptions)
+                    result.append(value)
+                    logger.debug(f"Appended drained value: {value}, result length now: {len(result)}")
+                interpreter.env_stack.pop()
         else:
             try:
                 logger.debug("Starting for loop for single generator")
@@ -73,11 +71,8 @@ async def visit_ListComp(interpreter, node: ast.ListComp, wrap_exceptions: bool 
                 logger.debug(f"Evaluating elt for gen_idx {gen_idx}, scope keys: {list(interpreter.env_stack[-1].keys())}")
                 value = await interpreter.visit(node.elt, wrap_exceptions=wrap_exceptions)
                 logger.debug(f"Element to append in list comp: {value}, type: {type(value)}")
-                logger.debug(f"Debug: About to append element {value} with current scope keys: {list(interpreter.env_stack[-1].keys())}")
-                logger.debug(f"Appended value: {value}, type: {type(value)}, result_id: {id(result)}")
                 result.append(value)
-                logger.debug(f"After append, length: {len(result)}, result_id: {id(result)}")
-                logger.debug(f"Appending element to list comp result: {value}")
+                logger.debug(f"Appended value: {value}, type: {type(value)}, result_id: {id(result)}")
             else:
                 comp = node.generators[gen_idx]
                 iterable = await interpreter.visit(comp.iter, wrap_exceptions=wrap_exceptions)
@@ -130,7 +125,7 @@ async def visit_ListComp(interpreter, node: ast.ListComp, wrap_exceptions: bool 
                                 logger.debug(f"After calling rec with gen_idx {gen_idx + 1} for item {item}")
                             interpreter.env_stack.pop()
                     except TypeError as e:
-                        logger.debug(f"TypeError in async for loop for iterable {iterable}: {e}")
+                        logger.debug(f"TypeError in for loop for iterable {iterable}: {e}")
                         lineno = getattr(node, "lineno", 1)
                         col = getattr(node, "col_offset", 0)
                         context_line = interpreter.source_lines[lineno - 1] if interpreter.source_lines and lineno <= len(interpreter.source_lines) else ""
