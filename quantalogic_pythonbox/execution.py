@@ -122,17 +122,20 @@ async def _async_execute_async(
                 else:
                     result, local_vars = execution_result, {}
             elif isinstance(func, AsyncGeneratorFunction):
-                gen = func(*args, **kwargs)
+                # Initialize async generator instance
+                gen = await func(*args, **kwargs)
                 logger.debug(f"Starting async generator execution for {func.__name__}")
                 values = []
                 try:
                     async for val in gen:
                         values.append(val)
                         logger.debug(f"Async generator yielded: {val}")
-                    result = values if values else None
+                    # Always return collected values for async generators
+                    result = values
                     logger.debug(f"Async generator completed with values: {result}")
                 except StopAsyncIteration:
-                    result = values if values else "Generator ended without yielding"
+                    # On StopAsyncIteration, return collected values
+                    result = values
                     logger.debug(f"StopAsyncIteration handled, result: {result}")
                 except Exception as exc_obj:
                     result = str(exc_obj)

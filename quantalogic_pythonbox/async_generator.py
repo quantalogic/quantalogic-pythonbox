@@ -36,68 +36,9 @@ class AsyncGeneratorFunction:
         self.logger.debug(f"Entering gen method for {self.node.name}")
         try:
             for stmt in self.node.body:
-                if isinstance(stmt, ast.Try):
-                    # Handle Try with yields
-                    try:
-                        for inner in stmt.body:
-                            if isinstance(inner, ast.Expr) and isinstance(inner.value, ast.Yield):
-                                yield_value = await self.interpreter.visit(inner.value.value)
-                                sent_value = yield yield_value
-                    except Exception as exc:
-                        # Handle matching except handlers
-                        for handler in stmt.handlers:
-                            if isinstance(handler.type, ast.Name) and handler.type.id == type(exc).__name__:
-                                for inner in handler.body:
-                                    if isinstance(inner, ast.Expr) and isinstance(inner.value, ast.Yield):
-                                        yield_value = await self.interpreter.visit(inner.value.value)
-                                        sent_value = yield yield_value
-                                break
-                        else:
-                            raise
-                    continue
-                self.logger.debug(f"Executing statement in gen: {stmt.__class__.__name__}")
-                if isinstance(stmt, ast.Assign) and isinstance(stmt.value, ast.Yield):
-                    yield_value = await self.interpreter.visit(stmt.value.value)
-                    self.logger.debug(f"Yielding value in gen: {yield_value}, type: {type(yield_value).__name__}, active: {self.interpreter.generator_context.get('active', False)}")
-                    sent_value = yield yield_value
-                    self.logger.debug(f"Received sent value in gen: {sent_value}")
-                    target = stmt.targets[0]
-                    if isinstance(target, ast.Name):
-                        # Set variable without awaiting, as set_variable is synchronous
-                        self.interpreter.set_variable(target.id, sent_value)
-                        self.logger.debug(f"Assigned sent value to variable '{target.id}': {sent_value}, type: {type(sent_value).__name__}")
-                    else:
-                        raise Exception(f"Unsupported target type for yield assignment: {target.__class__.__name__}")
-                elif isinstance(stmt, ast.Assign) and isinstance(stmt.value, ast.YieldFrom):
-                    yield_from_value = await self.interpreter.visit(stmt.value.value)
-                    async for item in yield_from_value:
-                        self.logger.debug(f"Yielding from item in gen: {item}, type: {type(item).__name__}, active: {self.interpreter.generator_context.get('active', False)}")
-                        sent_value = yield item
-                        self.logger.debug(f"Received sent value in gen: {sent_value}")
-                elif isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Yield):
-                    yield_value = await self.interpreter.visit(stmt.value.value)
-                    self.logger.debug(f"Yielding value in gen: {yield_value}, type: {type(yield_value).__name__}, active: {self.interpreter.generator_context.get('active', False)}")
-                    sent_value = yield yield_value
-                    self.logger.debug(f"Received sent value in gen: {sent_value}")
-                elif isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.YieldFrom):
-                    yield_from_value = await self.interpreter.visit(stmt.value.value)
-                    async for item in yield_from_value:
-                        self.logger.debug(f"Yielding from item in gen: {item}, type: {type(item).__name__}, active: {self.interpreter.generator_context.get('active', False)}")
-                        sent_value = yield item
-                        self.logger.debug(f"Received sent value in gen: {sent_value}")
-                elif isinstance(stmt, ast.Yield):
-                    yield_value = await self.interpreter.visit(stmt.value)
-                    self.logger.debug(f"Yielding value in gen: {yield_value}, type: {type(yield_value).__name__}, active: {self.interpreter.generator_context.get('active', False)}")
-                    sent_value = yield yield_value
-                    self.logger.debug(f"Received sent value in gen: {sent_value}")
-                elif isinstance(stmt, ast.YieldFrom):
-                    yield_from_value = await self.interpreter.visit(stmt.value)
-                    async for item in yield_from_value:
-                        self.logger.debug(f"Yielding from item in gen: {item}, type: {type(item).__name__}, active: {self.interpreter.generator_context.get('active', False)}")
-                        sent_value = yield item
-                        self.logger.debug(f"Received sent value in gen: {sent_value}")
-                else:
-                    await self.interpreter.visit(stmt, wrap_exceptions=True)
+                result = await self.interpreter.visit(stmt, wrap_exceptions=False)
+                if result is not None:
+                    yield result
         except ReturnException as ret:
             # Properly end async generator with return value
             self.logger.debug(f"Gen caught ReturnException with return value: {ret.value}")
