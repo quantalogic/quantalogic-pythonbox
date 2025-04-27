@@ -88,81 +88,22 @@ class AsyncGeneratorFunction:
         new_interp: ASTInterpreter = self.interpreter.spawn_from_env(new_env_stack)
 
         async def execute():
-            logger.debug(f"Starting execution of {self.node.name}")
+            logger.debug("Entering execute method")
             new_interp.generator_context['active'] = True
             try:
                 for stmt in self.node.body:
-                    logger.debug(f"Processing statement in execute: {type(stmt).__name__}")
-                    if isinstance(stmt, ast.Try):
-                        try:
-                            for body_stmt in stmt.body:
-                                logger.debug(f"Processing try block statement: {type(body_stmt).__name__}")
-                                if isinstance(body_stmt, ast.Expr) and isinstance(body_stmt.value, ast.Yield):
-                                    value = await new_interp.visit(body_stmt.value.value, wrap_exceptions=True) if body_stmt.value.value else None
-                                    logger.debug(f"Yielding value: {value}, type: {type(value)}")
-                                    sent_value = yield value
-                                    if isinstance(sent_value, BaseException):
-                                        logger.error(f"Received exception via send: {type(sent_value).__name__}")
-                                        raise sent_value
-                                elif isinstance(body_stmt, ast.Assign) and len(body_stmt.targets) == 1 and isinstance(body_stmt.value, ast.Yield):
-                                    value = await new_interp.visit(body_stmt.value.value, wrap_exceptions=True) if body_stmt.value.value else None
-                                    logger.debug(f"Yielding value from assign: {value}, type: {type(value)}")
-                                    sent_value = yield value
-                                    if isinstance(sent_value, BaseException):
-                                        logger.error(f"Received exception via send in assign: {type(sent_value).__name__}")
-                                        raise sent_value
-                                    await new_interp.assign(body_stmt.targets[0], sent_value)
-                                else:
-                                    await new_interp.visit(body_stmt, wrap_exceptions=True)
-                        except Exception as e:
-                            logger.error(f"Exception in try block: {str(e)}, type: {type(e).__name__}")
-                            handled = False
-                            for handler in stmt.handlers:
-                                exc_type = await new_interp._resolve_exception_type(handler.type)
-                                if exc_type and isinstance(e, exc_type):
-                                    if handler.name:
-                                        new_interp.set_variable(handler.name, e)
-                                    for handler_stmt in handler.body:
-                                        logger.debug(f"Processing handler statement: {type(handler_stmt).__name__}")
-                                        if isinstance(handler_stmt, ast.Expr) and isinstance(handler_stmt.value, ast.Yield):
-                                            value = await new_interp.visit(handler_stmt.value.value, wrap_exceptions=True) if handler_stmt.value.value else None
-                                            logger.debug(f"Yielding from handler: {value}, type: {type(value)}")
-                                            sent_value = yield value
-                                            if isinstance(sent_value, BaseException):
-                                                logger.error(f"Received exception via send in handler: {type(sent_value).__name__}")
-                                                raise sent_value
-                                        elif isinstance(handler_stmt, ast.Assign) and len(handler_stmt.targets) == 1 and isinstance(handler_stmt.value, ast.Yield):
-                                            value = await new_interp.visit(handler_stmt.value.value, wrap_exceptions=True) if handler_stmt.value.value else None
-                                            logger.debug(f"Yielding from handler assign: {value}, type: {type(value)}")
-                                            sent_value = yield value
-                                            if isinstance(sent_value, BaseException):
-                                                logger.error(f"Received exception via send in handler assign: {type(sent_value).__name__}")
-                                                raise sent_value
-                                            await new_interp.assign(handler_stmt.targets[0], sent_value)
-                                        else:
-                                            await new_interp.visit(handler_stmt, wrap_exceptions=True)
-                                    handled = True
-                                    break
-                            if not handled:
-                                raise e
+                    logger.debug(f"Executing statement: {stmt.__class__.__name__}")
+                    if isinstance(stmt, ast.Yield):
+                        yield_value = await new_interp.visit(stmt.value)
+                        logger.debug(f"Yielding value: {yield_value}")
+                        yield yield_value
+                    elif isinstance(stmt, ast.YieldFrom):
+                        yield_from_value = await new_interp.visit(stmt.value)
+                        async for item in yield_from_value:
+                            logger.debug(f"Yielding from item: {item}")
+                            yield item
                     else:
-                        if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Yield):
-                            value = await new_interp.visit(stmt.value.value, wrap_exceptions=True) if stmt.value.value else None
-                            logger.debug(f"Yielding general value: {value}, type: {type(value)}")
-                            sent_value = yield value
-                            if isinstance(sent_value, BaseException):
-                                logger.error(f"Received general exception via send: {type(sent_value).__name__}")
-                                raise sent_value
-                        elif isinstance(stmt, ast.Assign) and len(stmt.targets) == 1 and isinstance(stmt.value, ast.Yield):
-                            value = await new_interp.visit(stmt.value.value, wrap_exceptions=True) if stmt.value.value else None
-                            logger.debug(f"Yielding from general assign: {value}, type: {type(value)}")
-                            sent_value = yield value
-                            if isinstance(sent_value, BaseException):
-                                logger.error(f"Received general assign exception via send: {type(sent_value).__name__}")
-                                raise sent_value
-                            await new_interp.assign(stmt.targets[0], sent_value)
-                        else:
-                            await new_interp.visit(stmt, wrap_exceptions=True)
+                        await new_interp.visit(stmt, wrap_exceptions=True)
             except ReturnException as ret:
                 logger.debug(f"Caught ReturnException with value: {ret.value}")
                 raise StopAsyncIteration(ret.value or None)
@@ -190,7 +131,7 @@ class AsyncGeneratorFunction:
                 return self
 
             async def __anext__(self):
-                logger.debug("Entering __anext__ method for generator")
+                logger.debug(f"__anext__ called, attempting to send None")
                 try:
                     result = await self.gen.asend(None)
                     logger.debug(f"__anext__ yielded result: {result}, type: {type(result)}")

@@ -274,7 +274,7 @@ async def _async_execute_async(
         local_vars = {}
         return AsyncExecutionResult(
             result=result if result is not None else "Execution failed",
-            error=str(exc_obj),
+            error=f"{type(exc_obj).__name__}: {str(exc_obj)}",
             execution_time=time.time() - start_time,
             local_variables=local_vars
         )
