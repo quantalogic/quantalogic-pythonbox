@@ -36,6 +36,25 @@ class AsyncGeneratorFunction:
         self.logger.debug(f"Entering gen method for {self.node.name}")
         try:
             for stmt in self.node.body:
+                if isinstance(stmt, ast.Try):
+                    # Handle Try with yields
+                    try:
+                        for inner in stmt.body:
+                            if isinstance(inner, ast.Expr) and isinstance(inner.value, ast.Yield):
+                                yield_value = await self.interpreter.visit(inner.value.value)
+                                sent_value = yield yield_value
+                    except Exception as exc:
+                        # Handle matching except handlers
+                        for handler in stmt.handlers:
+                            if isinstance(handler.type, ast.Name) and handler.type.id == type(exc).__name__:
+                                for inner in handler.body:
+                                    if isinstance(inner, ast.Expr) and isinstance(inner.value, ast.Yield):
+                                        yield_value = await self.interpreter.visit(inner.value.value)
+                                        sent_value = yield yield_value
+                                break
+                        else:
+                            raise
+                    continue
                 self.logger.debug(f"Executing statement in gen: {stmt.__class__.__name__}")
                 if isinstance(stmt, ast.Assign) and isinstance(stmt.value, ast.Yield):
                     yield_value = await self.interpreter.visit(stmt.value.value)

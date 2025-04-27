@@ -1,5 +1,5 @@
 import ast
-from typing import Any, Optional
+from typing import Any
 
 
 async def visit_Try(interpreter, node: ast.Try, wrap_exceptions: bool = True) -> Any:
@@ -9,7 +9,8 @@ async def visit_Try(interpreter, node: ast.Try, wrap_exceptions: bool = True) ->
     interpreter.env_stack[0]['logger'].debug("Entering visit_Try")
     try:
         for stmt in node.body:
-            result = await interpreter.visit(stmt, wrap_exceptions=True)
+            # Execute body without wrapping to allow exceptions like StopAsyncIteration to propagate
+            result = await interpreter.visit(stmt, wrap_exceptions=False)
     except ReturnException:
         interpreter.env_stack[0]['logger'].debug("Propagating ReturnException")
         # Propagate return after executing finalbody
@@ -49,13 +50,13 @@ async def visit_Try(interpreter, node: ast.Try, wrap_exceptions: bool = True) ->
         interpreter.env_stack[0]['logger'].debug("Try block completed, executing orelse if present")
         # Execute else clause if no exception was raised
         for stmt in node.orelse:
-            result = await interpreter.visit(stmt, wrap_exceptions=True)
+            result = await interpreter.visit(stmt, wrap_exceptions=False)
     finally:
         if node.finalbody:
             interpreter.env_stack[0]['logger'].debug("Executing finalbody")
             for stmt in node.finalbody:
                 # Execute finalbody for side effects, do not override result
-                await interpreter.visit(stmt, wrap_exceptions=True)
+                await interpreter.visit(stmt, wrap_exceptions=False)
     if exception_raised and not node.handlers and not node.finalbody:
         interpreter.env_stack[0]['logger'].debug("Reraising unhandled exception")
         raise exception_raised

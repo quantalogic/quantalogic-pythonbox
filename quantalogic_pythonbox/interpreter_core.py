@@ -541,7 +541,7 @@ class ASTInterpreter:
             for handler in node.handlers:
                 if handler.type:
                     try:
-                        exc_type = await self.visit(handler.type, wrap_exceptions=False)
+                        exc_type = await self._resolve_exception_type(handler.type)
                     except Exception as type_err:
                         self.env_stack[0]['logger'].debug(f"Error resolving exception type: {type_err}")
                         continue  # Skip this handler if type resolution fails
@@ -604,6 +604,16 @@ class ASTInterpreter:
     async def _resolve_exception_type(self, node: Optional[ast.AST]) -> Any:
         if node is None:
             return Exception
+        # If exception type is a simple name, try resolving from env or builtins
+        if isinstance(node, ast.Name):
+            name = node.id
+            try:
+                return self.get_variable(name)
+            except Exception:
+                import builtins
+                if hasattr(builtins, name):
+                    return getattr(builtins, name)
+                # Unable to resolve, fall back
         return await self.visit(node, wrap_exceptions=True)
 
     async def run_sync_stmt(self, stmt: ast.stmt) -> Any:
