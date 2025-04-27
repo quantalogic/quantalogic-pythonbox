@@ -37,7 +37,34 @@ class AsyncGeneratorFunction:
         try:
             for stmt in self.node.body:
                 self.logger.debug(f"Executing statement in gen: {stmt.__class__.__name__}")
-                if isinstance(stmt, ast.Assign) and isinstance(stmt.value, ast.Yield):
+                # Handle async generator AST Try nodes specifically
+                if isinstance(stmt, ast.Try):
+                    self.logger.debug(f"Custom handling AST Try in gen for {self.node.name}")
+                    try:
+                        for inner in stmt.body:
+                            if isinstance(inner, ast.Expr) and isinstance(inner.value, ast.Yield):
+                                yield_value = await self.interpreter.visit(inner.value.value)
+                                self.logger.debug(f"Yielding value in Try body: {yield_value}")
+                                sent_value = yield yield_value
+                                self.logger.debug(f"Received sent value in Try body: {sent_value}")
+                            else:
+                                await self.interpreter.visit(inner, wrap_exceptions=True)
+                    except Exception as e:
+                        # Handle exception handlers for the Try AST node
+                        for handler in stmt.handlers:
+                            exc_type = None
+                            if handler.type and hasattr(handler.type, 'id'):
+                                exc_type = getattr(__import__('builtins'), handler.type.id, None)
+                            if exc_type and isinstance(e, exc_type):
+                                for inner_handler in handler.body:
+                                    if isinstance(inner_handler, ast.Expr) and isinstance(inner_handler.value, ast.Yield):
+                                        yield_value = await self.interpreter.visit(inner_handler.value.value)
+                                        self.logger.debug(f"Yielding value in Except body: {yield_value}")
+                                        sent_value = yield yield_value
+                                        self.logger.debug(f"Received sent value in Except body: {sent_value}")
+                                break
+                    continue
+                elif isinstance(stmt, ast.Assign) and isinstance(stmt.value, ast.Yield):
                     yield_value = await self.interpreter.visit(stmt.value.value)
                     self.logger.debug(f"Yielding value in gen: {yield_value}, type: {type(yield_value).__name__}, active: {self.interpreter.generator_context.get('active', False)}")
                     sent_value = yield yield_value
