@@ -38,7 +38,6 @@ async def visit_FunctionDef(interpreter, node: ast.FunctionDef, wrap_exceptions:
 
 async def visit_AsyncFunctionDef(interpreter, node: ast.AsyncFunctionDef, wrap_exceptions: bool = True) -> None:
     from .function_utils import AsyncFunction, AsyncGeneratorFunction
-    from .utils import has_await
     closure: List[Dict[str, Any]] = interpreter.env_stack[:]
     pos_kw_params = [arg.arg for arg in node.args.args]
     vararg_name = node.args.vararg.arg if node.args.vararg else None
@@ -66,7 +65,6 @@ async def visit_AsyncFunctionDef(interpreter, node: ast.AsyncFunctionDef, wrap_e
 
 
 async def visit_Call(interpreter, node: ast.Call, is_await_context: bool = False, wrap_exceptions: bool = True) -> Any:
-    from .exceptions import WrappedException
     from .function_utils import Function, AsyncFunction, AsyncGeneratorFunction
     from .execution_utils import create_class_instance, execute_function
     func = await interpreter.visit(node.func, wrap_exceptions=wrap_exceptions)
@@ -97,9 +95,6 @@ async def visit_Call(interpreter, node: ast.Call, is_await_context: bool = False
 
     if func is str and len(evaluated_args) == 1 and isinstance(evaluated_args[0], BaseException):
         exc = evaluated_args[0]
-        if isinstance(exc, WrappedException) and hasattr(exc, 'original_exception'):
-            inner_exc = exc.original_exception
-            return inner_exc.args[0] if inner_exc.args else str(inner_exc)
         return exc.args[0] if exc.args else str(exc)
 
     if func is super:
@@ -184,26 +179,15 @@ async def visit_Call(interpreter, node: ast.Call, is_await_context: bool = False
 
 
 async def visit_Await(interpreter, node: ast.Await, wrap_exceptions: bool = True) -> Any:
-    from .exceptions import WrappedException
     coro = await interpreter.visit(node.value, is_await_context=True, wrap_exceptions=wrap_exceptions)
-    interpreter.env_stack[0]["logger"].debug(f"Attempting to await object of type {type(coro)} with value {coro}")
-    if not asyncio.iscoroutine(coro):
-        raise TypeError(f"Cannot await non-coroutine object: {type(coro)}")
-    
     try:
-        return await asyncio.wait_for(coro, timeout=60)
-    except asyncio.TimeoutError as e:
-        line_info = f"line {node.lineno}" if hasattr(node, "lineno") else "unknown line"
-        context_line = interpreter.source_lines[node.lineno - 1] if interpreter.source_lines and hasattr(node, "lineno") else "<unknown>"
-        error_msg = f"Operation timed out after 60 seconds at {line_info}: {context_line.strip()}"
-        logger_msg = f"Coroutine execution timed out: {error_msg}"
-        interpreter.env_stack[0]["logger"].error(logger_msg)
-        
+        awaited_result = await asyncio.wait_for(coro, timeout=60)
+        return awaited_result
+    except Exception as e:
         if wrap_exceptions:
-            col = getattr(node, "col_offset", 0)
-            raise WrappedException(error_msg, e, node.lineno if hasattr(node, "lineno") else 0, col, context_line)
+            raise RuntimeError(f"Error awaiting expression: {str(e)}") from e
         else:
-            raise asyncio.TimeoutError(error_msg) from e
+            raise
 
 
 async def visit_Lambda(interpreter, node: ast.Lambda, wrap_exceptions: bool = True) -> Any:

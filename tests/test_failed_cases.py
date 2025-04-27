@@ -1,6 +1,5 @@
 import pytest
 from quantalogic_pythonbox import execute_async
-import asyncio
 
 # Basic generator test to verify core functionality
 @pytest.mark.asyncio
@@ -35,6 +34,26 @@ async def compute():
 """
     result = await execute_async(source, entry_point="compute", allowed_modules=["asyncio"])
     assert result.result == 1
+
+# Isolated async generator return value test
+@pytest.mark.asyncio
+async def test_isolated_async_generator_return_value():
+    source = """
+async def async_gen():
+    yield 42
+    return 'done'
+
+async def main():
+    gen = async_gen()
+    try:
+        while True:
+            value = await gen.__anext__()
+            # Consume yielded values, but not necessary for this test
+    except StopAsyncIteration as e:
+        return e.value  # Capture return value
+"""
+    execution_result = await execute_async(source, entry_point="main", allowed_modules=["asyncio"])
+    assert execution_result.result == 'done', f"Expected 'done', got {execution_result.result}"
 
 # Test basic slicing behavior
 @pytest.mark.asyncio

@@ -30,6 +30,7 @@ class AsyncFunction:
         self.kw_defaults = kw_defaults
 
     async def __call__(self, *args: Any, _return_locals: bool = False, **kwargs: Any) -> Any:
+        logger.debug(f"Starting AsyncFunction {self.node.name} with args: {args}, kwargs: {kwargs}")
         new_env_stack: List[Dict[str, Any]] = self.closure[:]
         local_frame: Dict[str, Any] = {}
         local_frame[self.node.name] = self
@@ -86,19 +87,24 @@ class AsyncFunction:
         new_interp: ASTInterpreter = self.interpreter.spawn_from_env(new_env_stack)
         last_value = None
         try:
+            logger.debug(f"Beginning statement execution in {self.node.name}")
             for stmt in self.node.body:
+                logger.debug(f"Executing statement: {stmt.__class__.__name__} in {self.node.name}")
                 last_value = await new_interp.visit(stmt, wrap_exceptions=True)
-            logger.debug(f"AsyncFunction {self.node.name} completed all statements, last_value: {last_value}")
+            logger.debug(f"{self.node.name} completed all statements, last_value: {last_value}")
             if _return_locals:
                 local_vars = {k: v for k, v in local_frame.items() if not k.startswith('__')}
                 return last_value, local_vars
             return last_value
         except ReturnException as ret:
-            logger.debug(f"AsyncFunction {self.node.name} returning value from return exception: {ret.value}")
+            logger.debug(f"{self.node.name} caught ReturnException with value: {ret.value}")
             if _return_locals:
                 local_vars = {k: v for k, v in local_frame.items() if not k.startswith('__')}
                 return ret.value, local_vars
             return ret.value
+        except Exception as e:
+            logger.error(f"Exception in {self.node.name}: {str(e)}, type: {type(e).__name__}")
+            raise
         finally:
             if not _return_locals:
                 new_env_stack.pop()

@@ -30,7 +30,7 @@ class AsyncGeneratorFunction:
         self.kw_defaults = kw_defaults
 
     async def __call__(self, *args: Any, **kwargs: Any) -> Any:
-        logger.debug(f"Starting AsyncGeneratorFunction {self.node.name}")
+        logger.debug("Starting AsyncGeneratorFunction " + self.node.name)
         
         new_env_stack: List[Dict[str, Any]] = self.closure[:]
         local_frame: Dict[str, Any] = {}
@@ -53,23 +53,23 @@ class AsyncGeneratorFunction:
                     local_frame[self.vararg_name] = []
                 local_frame[self.vararg_name].append(arg)
             else:
-                raise TypeError(f"Async generator '{self.node.name}' takes {total_pos} positional arguments but {len(args)} were given")
+                raise TypeError("Async generator '" + self.node.name + "' takes " + str(total_pos) + " positional arguments but " + str(len(args)) + " were given")
         if self.vararg_name and self.vararg_name not in local_frame:
             local_frame[self.vararg_name] = tuple()
 
         for kwarg_name, kwarg_value in kwargs.items():
             if kwarg_name in self.posonly_params:
-                raise TypeError(f"Async generator '{self.node.name}' got an unexpected keyword argument '{kwarg_name}' (positional-only)")
+                raise TypeError("Async generator '" + self.node.name + "' got an unexpected keyword argument '" + kwarg_name + "' (positional-only)")
             elif kwarg_name in self.pos_kw_params or kwarg_name in self.kwonly_params:
                 if kwarg_name in local_frame:
-                    raise TypeError(f"Async generator '{self.node.name}' got multiple values for argument '{kwarg_name}'")
+                    raise TypeError("Async generator '" + self.node.name + "' got multiple values for argument '" + kwarg_name + "'")
                 local_frame[kwarg_name] = kwarg_value
             elif self.kwarg_name:
                 if self.kwarg_name not in local_frame:
                     local_frame[self.kwarg_name] = {}
                 local_frame[self.kwarg_name][kwarg_name] = kwarg_value
             else:
-                raise TypeError(f"Async generator '{self.node.name}' got an unexpected keyword argument '{kwarg_name}'")
+                raise TypeError("Async generator '" + self.node.name + "' got an unexpected keyword argument '" + kwarg_name + "'")
 
         for param in self.pos_kw_params:
             if param not in local_frame and param in self.pos_defaults:
@@ -82,37 +82,67 @@ class AsyncGeneratorFunction:
         missing_args += [param for param in self.pos_kw_params if param not in local_frame and param not in self.pos_defaults]
         missing_args += [param for param in self.kwonly_params if param not in local_frame and param not in self.kw_defaults]
         if missing_args:
-            raise TypeError(f"Async generator '{self.node.name}' missing required arguments: {', '.join(missing_args)}")
+            raise TypeError("Async generator '" + self.node.name + "' missing required arguments: " + ', '.join(missing_args))
 
         new_env_stack.append(local_frame)
         new_interp: ASTInterpreter = self.interpreter.spawn_from_env(new_env_stack)
 
         async def execute():
-            logger.debug("Entering execute method")
+            logger.debug("Execute method started for async generator")
             new_interp.generator_context['active'] = True
             try:
                 for stmt in self.node.body:
-                    logger.debug(f"Executing statement: {stmt.__class__.__name__}")
-                    if isinstance(stmt, ast.Yield):
+                    logger.debug("Executing statement: " + stmt.__class__.__name__)
+                    if isinstance(stmt, ast.Assign) and isinstance(stmt.value, ast.Yield):
+                        # Handle yield expression in assignment
+                        yield_value = await new_interp.visit(stmt.value.value)
+                        logger.debug("Yielding value from Yield expression: " + str(yield_value) + ", type: " + type(yield_value).__name__)
+                        sent_value = yield yield_value  # Yield the value and receive sent value
+                        target = stmt.targets[0]  # Assume simple target for now, e.g., ast.Name
+                        if isinstance(target, ast.Name):
+                            await new_interp.set_variable(target.id, sent_value)
+                            logger.debug("Assigned sent value to variable '" + target.id + "': " + str(sent_value) + ", type: " + type(sent_value).__name__)
+                        else:
+                            raise Exception("Unsupported target type for yield assignment: " + target.__class__.__name__)
+                    elif isinstance(stmt, ast.Assign) and isinstance(stmt.value, ast.YieldFrom):
+                        # Handle YieldFrom expression in assignment
+                        yield_from_value = await new_interp.visit(stmt.value.value)
+                        async for item in yield_from_value:
+                            logger.debug("Yielding from item in YieldFrom expression: " + str(item) + ", type: " + type(item).__name__)
+                            sent_value = yield item  # Yield each item and receive sent value
+                            # For simplicity, ignore sent value in YieldFrom loop; can be extended if needed
+                        # After YieldFrom, assign any final value if applicable (not standard, so skip for now)
+                    elif isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Yield):
+                        yield_value = await new_interp.visit(stmt.value.value)
+                        logger.debug("Yielding value from Yield expression: " + str(yield_value) + ", type: " + type(yield_value).__name__)
+                        sent_value = yield yield_value  # Yield and receive sent value, but no assignment
+                    elif isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.YieldFrom):
+                        yield_from_value = await new_interp.visit(stmt.value.value)
+                        async for item in yield_from_value:
+                            logger.debug("Yielding from item in YieldFrom expression: " + str(item) + ", type: " + type(item).__name__)
+                            sent_value = yield item  # Yield and receive sent value
+                    elif isinstance(stmt, ast.Yield):
                         yield_value = await new_interp.visit(stmt.value)
-                        logger.debug(f"Yielding value: {yield_value}")
-                        yield yield_value
+                        logger.debug("Yielding value from direct Yield node: " + str(yield_value) + ", type: " + type(yield_value).__name__)
+                        sent_value = yield yield_value  # Yield and receive sent value for direct Yield
                     elif isinstance(stmt, ast.YieldFrom):
                         yield_from_value = await new_interp.visit(stmt.value)
                         async for item in yield_from_value:
-                            logger.debug(f"Yielding from item: {item}")
-                            yield item
+                            logger.debug("Yielding from item in direct YieldFrom node: " + str(item) + ", type: " + type(item).__name__)
+                            sent_value = yield item  # Yield and receive sent value
                     else:
                         await new_interp.visit(stmt, wrap_exceptions=True)
             except ReturnException as ret:
-                logger.debug(f"Caught ReturnException with value: {ret.value}")
+                logger.debug("Caught ReturnException with value: " + str(ret.value) + ", raising StopAsyncIteration")
+                logger.error("ReturnException caught in execute: " + str(ret.value) + ", type: " + type(ret).__name__)
                 raise StopAsyncIteration(ret.value or None)
             except StopAsyncIteration:
                 logger.debug("Caught StopAsyncIteration in execute")
+                logger.error("StopAsyncIteration caught in execute")
                 raise
             except Exception as e:
-                logger.error(f"General exception in execute: {str(e)}, type: {type(e).__name__}")
-                raise e
+                logger.error("General exception in execute: " + str(e) + ", type: " + type(e).__name__)
+                raise
             finally:
                 logger.debug("Execution finished, setting active to False")
                 new_interp.generator_context['active'] = False
@@ -120,34 +150,37 @@ class AsyncGeneratorFunction:
 
         class AsyncGenerator:
             def __init__(self):
-                logger.debug(f"Initializing AsyncGenerator, setting self.gen to execute(). Type of execute(): {type(execute())}, value: {execute()}")
+                logger.debug("Initializing AsyncGenerator, setting self.gen to execute(). Type of self.gen: " + type(execute()).__name__)
                 self.gen = execute()
                 self.return_value = None
                 self.result = None
                 self.yielded_values = []
 
             def __aiter__(self):
-                logger.debug(f"__aiter__ called on AsyncGenerator of type {type(self)} and id {id(self)}")
+                logger.debug("__aiter__ called on AsyncGenerator")
                 return self
 
             async def __anext__(self):
-                logger.debug(f"__anext__ called, attempting to send None")
+                logger.debug("__anext__ called on AsyncGenerator")  
                 try:
-                    result = await self.gen.asend(None)
-                    logger.debug(f"__anext__ yielded result: {result}, type: {type(result)}")
+                    result = await self.gen.__anext__()
+                    logger.debug("__anext__ yielded result: " + str(result) + ", type: " + type(result).__name__)
                     return result
-                except StopAsyncIteration:
-                    logger.debug("__anext__ raising StopAsyncIteration")
-                    raise StopAsyncIteration from None
+                except StopAsyncIteration as e:
+                    logger.debug("__anext__ raising StopAsyncIteration with value: " + str(e.value if hasattr(e, 'value') else 'None'))
+                    raise
                 except Exception as e:
-                    logger.error(f"Exception in __anext__: {str(e)}, type: {type(e).__name__}")
+                    logger.error("Exception in __anext__: " + str(e) + ", type: " + type(e).__name__)
                     raise
 
             async def _send(self, value):
+                logger.debug(f"Type of self.gen: {type(self.gen).__name__}, value being sent: {value}")
                 try:
-                    return await self.gen.asend(value)
+                    return_value = self.gen.asend(value)
+                    logger.debug(f"Type of return_value from self.gen.asend: {type(return_value).__name__}")
+                    return await return_value
                 except StopAsyncIteration as e:
-                    logger.debug(f"StopAsyncIteration in asend with args: {e.args}")
+                    logger.debug("StopAsyncIteration in asend with args: " + str(e.args))
                     self.return_value = e.value if e.args else None
                     self.result = self.yielded_values if self.yielded_values else []
                     self.execution_finished = True
@@ -162,7 +195,7 @@ class AsyncGeneratorFunction:
                 try:
                     return await self.gen.athrow(val)
                 except StopAsyncIteration as e:
-                    logger.debug(f"StopAsyncIteration in athrow with args: {e.args}")
+                    logger.debug("StopAsyncIteration in athrow with args: " + str(e.args))
                     self.return_value = e.value if e.args else None
                     self.result = self.yielded_values if self.yielded_values else []
                     self.execution_finished = True
@@ -179,7 +212,7 @@ class AsyncGeneratorFunction:
                     await self.gen.aclose()
                     logger.debug("Generator closed")
                 except Exception as e:
-                    logger.debug(f"Exception during aclose: {e}")
+                    logger.debug("Exception during aclose: " + str(e))
                 return self.return_value
 
         logger.debug("Returning AsyncGenerator instance")
