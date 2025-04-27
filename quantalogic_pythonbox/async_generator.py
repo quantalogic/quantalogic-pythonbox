@@ -58,13 +58,14 @@ class AsyncGeneratorFunction:
         new_interp = self.interpreter.spawn_from_env(new_env_stack + [local_frame])
         
         async def gen():
-            logger.debug("Async generator execution started")
+            logger.debug(f"Async generator execution started for function: {self.node.name}")
             try:
                 for stmt in self.node.body:
                     logger.debug(f"Executing statement: {stmt.__class__.__name__}")
                     if isinstance(stmt, ast.Assign) and isinstance(stmt.value, ast.Yield):
                         yield_value = await new_interp.visit(stmt.value.value)
                         sent_value = yield yield_value
+                        logger.debug(f"Yielded value: {yield_value}, received sent value: {sent_value}")
                         target = stmt.targets[0]
                         if isinstance(target, ast.Name):
                             await new_interp.set_variable(target.id, sent_value)
@@ -75,16 +76,16 @@ class AsyncGeneratorFunction:
                         yield_from_value = await new_interp.visit(stmt.value.value)
                         async for item in yield_from_value:
                             sent_value = yield item
-                            logger.debug(f"Yielding from item and received sent value: {item}, sent: {sent_value}")
+                            logger.debug(f"Yielding from item: {item}, received sent value: {sent_value}")
                     elif isinstance(stmt, ast.Yield):
                         yield_value = await new_interp.visit(stmt.value)
                         sent_value = yield yield_value
-                        logger.debug(f"Yielding value and received sent value: {yield_value}, sent: {sent_value}")
+                        logger.debug(f"Yielded value: {yield_value}, received sent value: {sent_value}")
                     elif isinstance(stmt, ast.YieldFrom):
                         yield_from_value = await new_interp.visit(stmt.value)
                         async for item in yield_from_value:
                             sent_value = yield item
-                            logger.debug(f"Yielding from item and received sent value: {item}, sent: {sent_value}")
+                            logger.debug(f"Yielding from item: {item}, received sent value: {sent_value}")
                     else:
                         await new_interp.visit(stmt, wrap_exceptions=True)
             except ReturnException as ret:
