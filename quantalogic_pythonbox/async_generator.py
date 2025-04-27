@@ -132,17 +132,19 @@ class AsyncGenerator:
             self.logger.debug(f"asend yielded value: {result}")
             return result
         except StopAsyncIteration as e:
-            # Completion: propagate return value
             ret_val = e.args[0] if e.args else None
+            setattr(e, 'value', ret_val)
             self.logger.debug(f"asend received StopAsyncIteration for generator {self.gen_name}, return value: {ret_val}")
-            return ret_val
+            raise e
         except RuntimeError as re:
             # Unwrap StopAsyncIteration wrapped by Python runtime
             ctx = re.__context__ or re.__cause__
             if isinstance(ctx, StopAsyncIteration):
                 ret_val = ctx.args[0] if ctx.args else None
+                new_exc = StopAsyncIteration(ret_val)
+                setattr(new_exc, 'value', ret_val)
                 self.logger.debug(f"asend unwrapped StopAsyncIteration, return value: {ret_val}")
-                return ret_val
+                raise new_exc
             raise
         except Exception as exc:
             self.logger.error(f"Exception in asend for generator {self.gen_name}: {str(exc)}")
@@ -159,17 +161,19 @@ class AsyncGenerator:
             self.logger.debug(f"athrow yielded value: {result}")
             return result
         except StopAsyncIteration as e:
-            # Completion: propagate return value
             ret_val = e.args[0] if e.args else None
+            setattr(e, 'value', ret_val)
             self.logger.debug(f"athrow received StopAsyncIteration for generator {self.gen_name}, return value: {ret_val}")
-            return ret_val
+            raise e
         except RuntimeError as re:
             # Unwrap StopAsyncIteration wrapped by Python runtime
             ctx = re.__context__ or re.__cause__
             if isinstance(ctx, StopAsyncIteration):
                 ret_val = ctx.args[0] if ctx.args else None
+                new_exc = StopAsyncIteration(ret_val)
+                setattr(new_exc, 'value', ret_val)
                 self.logger.debug(f"athrow unwrapped StopAsyncIteration, return value: {ret_val}")
-                return ret_val
+                raise new_exc
             raise
         except Exception as err:
             self.logger.error(f"Exception in athrow for generator {self.gen_name}: {str(err)}")
