@@ -618,3 +618,19 @@ class ASTInterpreter:
         tuple_value = tuple(elements)
         self.env_stack[0]['logger'].debug(f"Tuple evaluated to {tuple_value}")
         return tuple_value
+
+    async def visit_Await(self, node: ast.Await, wrap_exceptions: bool = True) -> Any:
+        self.env_stack[0]['logger'].debug(f"Visiting Await at line {node.lineno if hasattr(node, 'lineno') else 'unknown'}")
+        value = await self.visit(node.value, wrap_exceptions=True)
+        try:
+            result = await value
+        except Exception as e:
+            # Propagate StopAsyncIteration without wrapping to allow async generator return value handling
+            if isinstance(e, StopAsyncIteration):
+                raise
+            if wrap_exceptions:
+                raise RuntimeError(f"Error awaiting expression: {str(e)}") from e
+            else:
+                raise
+        self.env_stack[0]['logger'].debug(f"Await evaluated to {result}")
+        return result

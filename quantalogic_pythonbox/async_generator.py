@@ -37,34 +37,7 @@ class AsyncGeneratorFunction:
         try:
             for stmt in self.node.body:
                 self.logger.debug(f"Executing statement in gen: {stmt.__class__.__name__}")
-                # Handle async generator AST Try nodes specifically
-                if isinstance(stmt, ast.Try):
-                    self.logger.debug(f"Custom handling AST Try in gen for {self.node.name}")
-                    try:
-                        for inner in stmt.body:
-                            if isinstance(inner, ast.Expr) and isinstance(inner.value, ast.Yield):
-                                yield_value = await self.interpreter.visit(inner.value.value)
-                                self.logger.debug(f"Yielding value in Try body: {yield_value}")
-                                sent_value = yield yield_value
-                                self.logger.debug(f"Received sent value in Try body: {sent_value}")
-                            else:
-                                await self.interpreter.visit(inner, wrap_exceptions=True)
-                    except Exception as e:
-                        # Handle exception handlers for the Try AST node
-                        for handler in stmt.handlers:
-                            exc_type = None
-                            if handler.type and hasattr(handler.type, 'id'):
-                                exc_type = getattr(__import__('builtins'), handler.type.id, None)
-                            if exc_type and isinstance(e, exc_type):
-                                for inner_handler in handler.body:
-                                    if isinstance(inner_handler, ast.Expr) and isinstance(inner_handler.value, ast.Yield):
-                                        yield_value = await self.interpreter.visit(inner_handler.value.value)
-                                        self.logger.debug(f"Yielding value in Except body: {yield_value}")
-                                        sent_value = yield yield_value
-                                        self.logger.debug(f"Received sent value in Except body: {sent_value}")
-                                break
-                    continue
-                elif isinstance(stmt, ast.Assign) and isinstance(stmt.value, ast.Yield):
+                if isinstance(stmt, ast.Assign) and isinstance(stmt.value, ast.Yield):
                     yield_value = await self.interpreter.visit(stmt.value.value)
                     self.logger.debug(f"Yielding value in gen: {yield_value}, type: {type(yield_value).__name__}, active: {self.interpreter.generator_context.get('active', False)}")
                     sent_value = yield yield_value
@@ -107,8 +80,9 @@ class AsyncGeneratorFunction:
                 else:
                     await self.interpreter.visit(stmt, wrap_exceptions=True)
         except ReturnException as ret:
-            self.logger.debug(f"Gen caught ReturnException: {ret.value}")
-            raise StopAsyncIteration(ret.value or None)
+            # Properly end async generator with return value
+            self.logger.debug(f"Gen caught ReturnException with return value: {ret.value}")
+            raise StopAsyncIteration(ret.value)
         except Exception as e:
             self.logger.error(f"Gen exception: {str(e)}")
             raise
@@ -158,16 +132,30 @@ class AsyncGenerator:
         self.logger = logging.getLogger(__name__)
 
     async def __anext__(self):
+        # Mark generator as active
         self.interpreter.generator_context['active'] = True
         self.logger.debug(f"gen_coroutine type: {type(self.gen_coroutine).__name__}")
         self.logger.debug(f"__anext__ called for generator {self.gen_name}, attempting asend(None)")
         try:
+            # Attempt to get next yield
             value = await self.gen_coroutine.asend(None)
-            self.logger.debug(f"__anext__ yielded value: {value}, type: {type(value).__name__}")
-            self.logger.debug(f"__anext__ call details: generator={self.gen_name}, value={value}")
+            self.logger.debug(f"__anext__ yielded value: {value}")
             return value
         except StopAsyncIteration as e:
-            self.logger.debug(f"__anext__ raised StopAsyncIteration for generator {self.gen_name}, value: {getattr(e, 'value', 'No value')}")
+            # Normal completion with optional return value
+            ret_val = e.args[0] if e.args else None
+            setattr(e, 'value', ret_val)
+            self.logger.debug(f"__anext__ raised StopAsyncIteration for generator {self.gen_name}, return value: {ret_val}")
+            raise e
+        except RuntimeError as re:
+            # Unwrap StopAsyncIteration wrapped by Python runtime
+            ctx = re.__context__ or re.__cause__
+            if isinstance(ctx, StopAsyncIteration):
+                ret_val = ctx.args[0] if ctx.args else None
+                new_exc = StopAsyncIteration(ret_val)
+                setattr(new_exc, 'value', ret_val)
+                self.logger.debug(f"__anext__ unwrapped StopAsyncIteration, return value: {ret_val}")
+                raise new_exc
             raise
         except Exception as exc:
             self.logger.error(f"Exception in __anext__ for generator {self.gen_name}: {str(exc)}, type: {type(exc).__name__}")
@@ -176,14 +164,25 @@ class AsyncGenerator:
             self.interpreter.generator_context['active'] = False
 
     async def asend(self, value):
+        # Mark generator as active
         self.interpreter.generator_context['active'] = True
-        self.logger.debug(f"gen_coroutine type: {type(self.gen_coroutine).__name__}")
         self.logger.debug(f"asend called for generator {self.gen_name}, sending value: {value}")
         try:
             result = await self.gen_coroutine.asend(value)
             self.logger.debug(f"asend yielded value: {result}")
             return result
-        except StopAsyncIteration:
+        except StopAsyncIteration as e:
+            # Completion: propagate return value
+            ret_val = e.args[0] if e.args else None
+            self.logger.debug(f"asend received StopAsyncIteration for generator {self.gen_name}, return value: {ret_val}")
+            return ret_val
+        except RuntimeError as re:
+            # Unwrap StopAsyncIteration wrapped by Python runtime
+            ctx = re.__context__ or re.__cause__
+            if isinstance(ctx, StopAsyncIteration):
+                ret_val = ctx.args[0] if ctx.args else None
+                self.logger.debug(f"asend unwrapped StopAsyncIteration, return value: {ret_val}")
+                return ret_val
             raise
         except Exception as exc:
             self.logger.error(f"Exception in asend for generator {self.gen_name}: {str(exc)}")
@@ -192,14 +191,25 @@ class AsyncGenerator:
             self.interpreter.generator_context['active'] = False
 
     async def athrow(self, exc):
+        # Mark generator as active
         self.interpreter.generator_context['active'] = True
-        self.logger.debug(f"gen_coroutine type: {type(self.gen_coroutine).__name__}")
         self.logger.debug(f"athrow called for generator {self.gen_name}, throwing exception: {exc}")
         try:
             result = await self.gen_coroutine.athrow(exc)
             self.logger.debug(f"athrow yielded value: {result}")
             return result
-        except StopAsyncIteration:
+        except StopAsyncIteration as e:
+            # Completion: propagate return value
+            ret_val = e.args[0] if e.args else None
+            self.logger.debug(f"athrow received StopAsyncIteration for generator {self.gen_name}, return value: {ret_val}")
+            return ret_val
+        except RuntimeError as re:
+            # Unwrap StopAsyncIteration wrapped by Python runtime
+            ctx = re.__context__ or re.__cause__
+            if isinstance(ctx, StopAsyncIteration):
+                ret_val = ctx.args[0] if ctx.args else None
+                self.logger.debug(f"athrow unwrapped StopAsyncIteration, return value: {ret_val}")
+                return ret_val
             raise
         except Exception as err:
             self.logger.error(f"Exception in athrow for generator {self.gen_name}: {str(err)}")

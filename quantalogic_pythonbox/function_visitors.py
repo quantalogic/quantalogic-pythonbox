@@ -222,6 +222,9 @@ async def visit_Await(interpreter, node: ast.Await, wrap_exceptions: bool = True
     try:
         awaited_result = await asyncio.wait_for(coro, timeout=60)
         return awaited_result
+    except StopAsyncIteration:
+        # Propagate StopAsyncIteration directly so user code can catch it
+        raise
     except Exception as e:
         if wrap_exceptions:
             raise RuntimeError(f"Error awaiting expression: {str(e)}") from e
