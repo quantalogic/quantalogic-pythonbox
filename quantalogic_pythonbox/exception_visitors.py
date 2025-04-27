@@ -22,6 +22,8 @@ async def visit_Try(interpreter, node: ast.Try, wrap_exceptions: bool = True) ->
             original_e = original_e.original_exception
         interpreter.env_stack[0]['logger'].debug(f"Unwrapped exception: {type(original_e).__name__}")
         exception_raised = original_e
+        # Track current exception to support bare raise
+        interpreter.current_exception = original_e
         for handler in node.handlers:
             exc_type = await interpreter._resolve_exception_type(handler.type) if handler.type else Exception
             interpreter.env_stack[0]['logger'].debug(f"Checking handler for exception type: {exc_type.__name__}")
@@ -31,6 +33,8 @@ async def visit_Try(interpreter, node: ast.Try, wrap_exceptions: bool = True) ->
                     interpreter.set_variable(handler.name, original_e)
                 for stmt in handler.body:
                     result = await interpreter.visit(stmt, wrap_exceptions=True)
+                # Clear current_exception after handling
+                interpreter.current_exception = None
                 break
         else:
             interpreter.env_stack[0]['logger'].debug("No handler matched")
