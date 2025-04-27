@@ -85,37 +85,39 @@ async def visit_For(self: ASTInterpreter, node: ast.For, wrap_exceptions: bool =
 
 async def visit_AsyncFor(self: ASTInterpreter, node: ast.AsyncFor, wrap_exceptions: bool = True) -> None:
     iter_obj = await self.visit(node.iter, wrap_exceptions=wrap_exceptions)
-    logger.debug(f"Visit_AsyncFor called for node at line {node.lineno if hasattr(node, 'lineno') else 'unknown'}, iterable after visit: {type(iter_obj).__name__}")
-    logger.debug(f"Iterable object: type {type(iter_obj).__name__}, value {iter_obj if isinstance(iter_obj, (int, str, list, dict)) else type(iter_obj)}")
+    logger.debug(f"Visit_AsyncFor called for node at line {node.lineno if hasattr(node, 'lineno') else 'unknown'}, iterable after visit: {type(iter_obj).__name__}, value: {iter_obj if isinstance(iter_obj, (int, str, list, dict)) else type(iter_obj)}")
     iterable = iter_obj
     logger.debug(f"AsyncFor iterable type: {type(iterable).__name__}")
-    broke = False
-    if hasattr(iterable, '__aiter__'):
-        iterator = iterable.__aiter__()
-        logger.debug(f"Iterator created: type {type(iterator).__name__}")
-        while True:
-            try:
-                logger.debug(f"Calling __anext__ on iterator")
-                value = await iterator.__anext__()
-                logger.debug(f"Received value from __anext__: {value}, type: {type(value).__name__}")
-            except StopAsyncIteration:
-                logger.debug("__anext__ raised StopAsyncIteration, breaking loop")
-                break
-            logger.debug(f"AsyncFor iteration with value: {value}, type: {type(value).__name__}")
-            await self.assign(node.target, value)
-            logger.debug(f"Assigned item in AsyncFor: value {value}, type {type(value).__name__}")
-            try:
-                for stmt in node.body:
-                    await self.visit(stmt, wrap_exceptions=wrap_exceptions)
-            except BreakException:
-                logger.debug("Break in AsyncFor")
-                broke = True
-                break
-            except ContinueException:
-                logger.debug("Continue in AsyncFor")
-                continue
-    else:
+    if not hasattr(iterable, '__aiter__'):
+        logger.error(f"Object {iterable} does not have __aiter__, raising TypeError")
         raise TypeError(f"Object {iterable} is not an async iterable")
+    iterator = iterable.__aiter__()
+    logger.debug(f"Iterator created: type {type(iterator).__name__}")
+    broke = False
+    while True:
+        try:
+            logger.debug(f"Calling __anext__ on iterator of type {type(iterator).__name__}")
+            value = await iterator.__anext__()
+            logger.debug(f"Received value from __anext__: {value}, type: {type(value).__name__}")
+        except StopAsyncIteration:
+            logger.debug("__anext__ raised StopAsyncIteration, breaking loop")
+            break
+        except Exception as e:
+            logger.error(f"Exception in __anext__: {str(e)}, type: {type(e).__name__}")
+            raise
+        logger.debug(f"AsyncFor iteration with value: {value}, type: {type(value).__name__}")
+        await self.assign(node.target, value)
+        logger.debug(f"Assigned item in AsyncFor: value {value}, type {type(value).__name__}")
+        try:
+            for stmt in node.body:
+                await self.visit(stmt, wrap_exceptions=wrap_exceptions)
+        except BreakException:
+            logger.debug("Break in AsyncFor")
+            broke = True
+            break
+        except ContinueException:
+            logger.debug("Continue in AsyncFor")
+            continue
     if not broke:
         for stmt in node.orelse:
             await self.visit(stmt, wrap_exceptions=wrap_exceptions)

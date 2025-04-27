@@ -505,6 +505,8 @@ class ASTInterpreter:
 
     async def visit_Name(self, node: ast.Name, wrap_exceptions: bool = True) -> Any:
         logger = self.env_stack[0]['logger']
+        if node.id == 'kwonly_params':
+            logger.debug(f"Query for 'kwonly_params' in context: env_stack depth {len(self.env_stack)}, node line {node.lineno if hasattr(node, 'lineno') else 'unknown'}")
         value = self.env_stack[-1].get(node.id, None)
         logger.debug(f"Visiting name: {node.id}, retrieved value: {value}, type: {type(value) if value is not None else 'NoneType'}, wrap_exceptions: {wrap_exceptions}")
         if value is None and wrap_exceptions:

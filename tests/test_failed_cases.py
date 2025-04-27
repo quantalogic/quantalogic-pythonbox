@@ -186,3 +186,178 @@ async def compute():
 """
     result = await execute_async(source, entry_point="compute")
     assert result.result == "done"
+
+# Targeted test for async generator send value propagation
+@pytest.mark.asyncio
+async def test_targeted_async_generator_send_value():
+    """Targeted test for async generator send value propagation"""
+    source = """
+async def async_gen():
+    x = yield 1
+    yield x
+
+async def compute():
+    gen = async_gen()
+    await gen.__anext__()  # Consume first yield
+    result = await gen.asend(42)  # Send value and check propagation
+    return result
+"""
+    result = await execute_async(source, entry_point="compute", allowed_modules=["asyncio"])
+    assert result.result == 42, f"Expected 42, got {result.result}"
+
+# Targeted tests for async generator exception handling and return value capture
+@pytest.mark.asyncio
+async def test_targeted_async_generator_exception_handling():
+    """Targeted test for async generator exception handling with athrow"""
+    source = """
+async def async_gen():
+    try:
+        yield 1
+    except ValueError:
+        yield 'caught'
+
+async def compute():
+    gen = async_gen()
+    await gen.__anext__()
+    result = await gen.athrow(ValueError)
+    return result
+"""
+    result = await execute_async(source, entry_point="compute", allowed_modules=["asyncio"])
+    assert result.result == 'caught', f"Expected 'caught', got {result.result}"
+
+@pytest.mark.asyncio
+async def test_targeted_async_generator_return_value():
+    """Targeted test for async generator return value capture"""
+    source = """
+async def async_gen():
+    yield 42
+    return 'done'
+
+async def compute():
+    gen = async_gen()
+    try:
+        while True:
+            value = await gen.__anext__()
+    except StopAsyncIteration as e:
+        return e.value
+"""
+    result = await execute_async(source, entry_point="compute", allowed_modules=["asyncio"])
+    assert result.result == 'done', f"Expected 'done', got {result.result}"
+
+# Targeted test for yield assignment in async generator
+@pytest.mark.asyncio
+async def test_targeted_async_generator_yield_assignment():
+    """Targeted test for yield assignment in async generator"""
+    source = """
+async def async_gen():
+    x = yield 1
+    return x
+
+async def compute():
+    gen = async_gen()
+    await gen.__anext__()  # Consume first yield
+    result = await gen.asend(42)
+    return result
+"""
+    result = await execute_async(source, entry_point="compute", allowed_modules=["asyncio"])
+    assert result.result == 42, f"Expected 42, got {result.result}"
+
+# Targeted test for send value with assignment in async generator
+@pytest.mark.asyncio
+async def test_targeted_async_generator_send_value_with_assignment():
+    """Targeted test for send value with assignment in async generator"""
+    source = """
+async def async_gen():
+    y = yield 'start'
+    yield y + ' received'
+
+async def compute():
+    gen = async_gen()
+    await gen.__anext__()  # Consume first yield
+    result = await gen.asend('value')
+    return result
+"""
+    result = await execute_async(source, entry_point="compute", allowed_modules=["asyncio"])
+    assert result.result == 'value received', f"Expected 'value received', got {result.result}"
+
+# Targeted test for async for loop with async generator
+@pytest.mark.asyncio
+async def test_targeted_async_for_loop():
+    """Targeted test for async for loop with async generator"""
+    source = """
+async def async_gen():
+    yield 1
+    yield 2
+
+async def compute():
+    sum_value = 0
+    async for i in async_gen():
+        sum_value += i
+    return sum_value
+"""
+    result = await execute_async(source, entry_point="compute", allowed_modules=["asyncio"])
+    assert result.result == 3, f"Expected 3, got {result.result}"
+
+# Test for UnboundLocalError with keyword-only parameters to diagnose binding issues.
+@pytest.mark.asyncio
+async def test_kwonly_param_error_handling():
+    """Test for UnboundLocalError with keyword-only parameters to diagnose binding issues."""
+    code = """
+async def func(*, kwonly_param: int = 42) -> int:
+    return kwonly_param
+"""
+    result = await execute_async(code, entry_point='func', namespace={})
+    assert result.result == 42, f"Expected 42, got {result.result}. Error: {result.error}"
+    assert result.error is None
+
+# Test for async function with no parameters to diagnose UnboundLocalError and basic execution issues.
+@pytest.mark.asyncio
+async def test_no_param_function():
+    """Test for async function with no parameters to ensure basic execution."""
+    code = """
+async def func() -> int:
+    return 42
+"""
+    result = await execute_async(code, entry_point='func', namespace={})
+    assert result.result == 42, f"Expected 42, got {result.result}. Error: {result.error}"
+    assert result.error is None
+
+# Test for async function with required keyword-only parameter to diagnose binding issues.
+@pytest.mark.asyncio
+async def test_required_kwonly_param():
+    """Test for async function with required keyword-only parameter."""
+    code = """
+async def func(*, kwonly_param: int) -> int:
+    return kwonly_param
+
+async def main():
+    return await func(kwonly_param=42)
+"""
+    result = await execute_async(code, entry_point='main', namespace={})
+    assert result.result == 42, f"Expected 42, got {result.result}. Error: {result.error}"
+    assert result.error is None
+
+# Test for user-defined variable 'kwonly_params' to diagnose UnboundLocalError.
+@pytest.mark.asyncio
+async def test_user_defined_kwonly_params():
+    """Test for user-defined variable 'kwonly_params' to diagnose UnboundLocalError."""
+    code = """
+async def func():
+    kwonly_params = 42
+    return kwonly_params
+"""
+    result = await execute_async(code, entry_point='func', namespace={})
+    assert result.result == 42, f"Expected 42, got {result.result}. Error: {result.error}"
+    assert result.error is None
+
+# Test for function with keyword-only parameters to diagnose UnboundLocalError.
+@pytest.mark.asyncio
+async def test_function_with_kwonly_params():
+    """Test function with keyword-only parameter to diagnose UnboundLocalError."""
+    code = """
+async def func(*, kwonly_param: int = 42) -> int:
+    return kwonly_param
+"""
+    result = await execute_async(code, entry_point='func', namespace={})
+    assert result.result == 42, f"Expected 42, got {result.result}. Error: {result.error}"
+    assert result.error is None
