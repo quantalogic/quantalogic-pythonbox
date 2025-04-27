@@ -28,12 +28,56 @@ class AsyncGeneratorFunction:
         self.kwarg_name = kwarg_name
         self.pos_defaults = pos_defaults
         self.kw_defaults = kw_defaults
+        self.gen_coroutine = self.gen()  # Store the coroutine object
+        self.logger = logging.getLogger(__name__)
+
+    async def gen(self):
+        self.logger.debug(f"Async generator gen started for {self.node.name}")
+        try:
+            for stmt in self.node.body:
+                self.logger.debug(f"Executing statement in gen: {stmt.__class__.__name__}")
+                if isinstance(stmt, ast.Assign) and isinstance(stmt.value, ast.Yield):
+                    yield_value = await self.interpreter.visit(stmt.value.value)
+                    self.logger.debug(f"Yielding in gen: {yield_value}")
+                    sent_value = yield yield_value
+                    self.logger.debug(f"Received in gen: {sent_value}")
+                    target = stmt.targets[0]
+                    if isinstance(target, ast.Name):
+                        await self.interpreter.set_variable(target.id, sent_value)
+                        self.logger.debug(f"Assigned sent value to variable '{target.id}': {sent_value}, type: {type(sent_value).__name__}")
+                    else:
+                        raise Exception(f"Unsupported target type for yield assignment: {target.__class__.__name__}")
+                elif isinstance(stmt, ast.Assign) and isinstance(stmt.value, ast.YieldFrom):
+                    yield_from_value = await self.interpreter.visit(stmt.value.value)
+                    async for item in yield_from_value:
+                        self.logger.debug(f"Yielding from item: {item}")
+                        sent_value = yield item
+                        self.logger.debug(f"Received sent value: {sent_value}")
+                elif isinstance(stmt, ast.Yield):
+                    yield_value = await self.interpreter.visit(stmt.value)
+                    self.logger.debug(f"Yielding in gen: {yield_value}")
+                    sent_value = yield yield_value
+                    self.logger.debug(f"Received in gen: {sent_value}")
+                elif isinstance(stmt, ast.YieldFrom):
+                    yield_from_value = await self.interpreter.visit(stmt.value)
+                    async for item in yield_from_value:
+                        self.logger.debug(f"Yielding from item: {item}")
+                        sent_value = yield item
+                        self.logger.debug(f"Received sent value: {sent_value}")
+                else:
+                    await self.interpreter.visit(stmt, wrap_exceptions=True)
+        except ReturnException as ret:
+            self.logger.debug(f"Gen caught ReturnException: {ret.value}")
+            raise StopAsyncIteration(ret.value or None)
+        except Exception as e:
+            self.logger.error(f"Gen exception: {str(e)}")
+            raise
 
     async def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        self.logger.debug(f"__call__ invoked for {self.node.name} with args: {args}, kwargs: {kwargs}")
         logger.debug(f"Starting AsyncGeneratorFunction {self.node.name} with args: {args}, kwargs: {kwargs}")
         
         # Use instance variables for argument binding
-        new_env_stack = self.closure[:]
         local_frame: Dict[str, Any] = {}
         
         # Bind positional arguments using self.pos_kw_params
@@ -55,43 +99,33 @@ class AsyncGeneratorFunction:
             local_frame[self.kwarg_name] = kwargs
         
         # Set up the interpreter with the new environment
-        new_interp = self.interpreter.spawn_from_env(new_env_stack + [local_frame])
-        
-        async def gen():
-            logger.debug(f"Async generator execution started for function: {self.node.name}")
-            try:
-                for stmt in self.node.body:
-                    logger.debug(f"Executing statement: {stmt.__class__.__name__}")
-                    if isinstance(stmt, ast.Assign) and isinstance(stmt.value, ast.Yield):
-                        yield_value = await new_interp.visit(stmt.value.value)
-                        sent_value = yield yield_value
-                        logger.debug(f"Yielded value: {yield_value}, received sent value: {sent_value}")
-                        target = stmt.targets[0]
-                        if isinstance(target, ast.Name):
-                            await new_interp.set_variable(target.id, sent_value)
-                            logger.debug(f"Assigned sent value to variable '{target.id}': {sent_value}, type: {type(sent_value).__name__}")
-                        else:
-                            raise Exception(f"Unsupported target type for yield assignment: {target.__class__.__name__}")
-                    elif isinstance(stmt, ast.Assign) and isinstance(stmt.value, ast.YieldFrom):
-                        yield_from_value = await new_interp.visit(stmt.value.value)
-                        async for item in yield_from_value:
-                            sent_value = yield item
-                            logger.debug(f"Yielding from item: {item}, received sent value: {sent_value}")
-                    elif isinstance(stmt, ast.Yield):
-                        yield_value = await new_interp.visit(stmt.value)
-                        sent_value = yield yield_value
-                        logger.debug(f"Yielded value: {yield_value}, received sent value: {sent_value}")
-                    elif isinstance(stmt, ast.YieldFrom):
-                        yield_from_value = await new_interp.visit(stmt.value)
-                        async for item in yield_from_value:
-                            sent_value = yield item
-                            logger.debug(f"Yielding from item: {item}, received sent value: {sent_value}")
-                    else:
-                        await new_interp.visit(stmt, wrap_exceptions=True)
-            except ReturnException as ret:
-                logger.debug(f"Caught ReturnException with value: {ret.value}, raising StopAsyncIteration")
-                raise StopAsyncIteration(ret.value or None)
-            except Exception as e:
-                logger.error(f"General exception in async generator: {str(e)}, type: {type(e).__name__}")
-                raise
-        return gen()
+        new_interp = self.interpreter.spawn_from_env(self.closure + [local_frame])
+        self.interpreter = new_interp  # Update interpreter if needed
+
+        class AsyncGenerator:
+            def __init__(self, gen_coroutine):
+                self.gen_coroutine = gen_coroutine
+                self.logger = logging.getLogger(__name__)
+
+            async def __anext__(self):
+                self.logger.debug(f"__anext__ called for generator {self.gen_coroutine.cr_code.co_name}, attempting asend(None)")
+                try:
+                    value = await self.gen_coroutine.asend(None)
+                    self.logger.debug(f"__anext__ yielded value: {value}")
+                    self.logger.debug(f"__anext__ call details: coroutine={self.gen_coroutine.cr_code.co_name}, value={value}, type={type(value).__name__}")
+                    return value
+                except StopAsyncIteration as e:
+                    self.logger.debug(f"__anext__ raised StopAsyncIteration with value: {getattr(e, 'value', 'No value')}")
+                    self.logger.debug(f"StopAsyncIteration details: type={type(e).__name__}, value={getattr(e, 'value', 'No value')}")
+                    raise
+                except Exception as exc:
+                    self.logger.error(f"Exception in __anext__: {str(exc)}, type: {type(exc).__name__}")
+                    self.logger.error(f"__anext__ exception details: coroutine={self.gen_coroutine.cr_code.co_name}, exception={str(exc)}, type={type(exc).__name__}")
+                    raise
+            def __aiter__(self):
+                return self
+
+        gen_coroutine = self.gen()
+        async_gen_instance = AsyncGenerator(gen_coroutine)
+        self.logger.debug(f"Returning AsyncGenerator instance for {self.node.name}")
+        return async_gen_instance

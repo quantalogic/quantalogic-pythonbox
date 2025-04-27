@@ -32,6 +32,18 @@ async def foo():
             assert result.result == 42
             assert result.error is None
 
+    async def test_async_append_simple(self):
+        code = """
+async def main():
+    lst = []
+    lst.append(1)
+    lst.append(2)
+    return lst
+        """
+        result_obj = await execute_async(code, entry_point="main")
+        assert result_obj.result == [1, 2], f"Expected [1, 2], but got {result_obj.result}"
+        assert result_obj.error is None
+
 @pytest.mark.asyncio
 class TestAsyncGenerators:
     async def test_async_generator(self):
@@ -62,6 +74,67 @@ async def main():
         result = await execute_async(code, entry_point="main")
         assert result.result == []
         assert result.error is None
+
+    async def test_async_generator_append(self):
+        code = """
+async def gen():
+    lst = []
+    lst.append(1)  # Simple append
+    yield lst
+    lst.append(2)  # Append after yield
+    yield lst
+
+async def main():
+    result = []
+    async for value in gen():
+        result.extend(value)
+    return result
+        """
+        result_obj = await execute_async(code, entry_point="main")
+        assert result_obj.result == [1, 1, 2], f"Expected [1, 1, 2], but got {result_obj.result}"
+        assert result_obj.error is None
+
+    async def test_async_generator_anext_manual(self):
+        code = """
+async def gen():
+    yield 1
+    yield 2
+
+async def main():
+    gen_obj = gen()
+    result = []
+    try:
+        while True:
+            value = await gen_obj.__anext__()
+            result.append(value)
+    except StopAsyncIteration:
+        return result
+        """
+        result_obj = await execute_async(code, entry_point="main")
+        assert result_obj.result == [1, 2], f"Expected [1, 2], but got {result_obj.result}"
+        assert result_obj.error is None
+
+    async def test_async_generator_anext_existence(self):
+        code = """
+async def gen():
+    yield 1
+    yield 2
+
+async def main():
+    gen_obj = gen()
+    assert hasattr(gen_obj, '__anext__'), "Generator object missing __anext__ method"
+    assert callable(gen_obj.__anext__), "__anext__ method is not callable"
+    result = []
+    try:
+        while True:
+            value = await gen_obj.__anext__()
+            result.append(value)
+    except StopAsyncIteration:
+        return result
+    """
+        result_obj = await execute_async(code, entry_point="main")
+        assert result_obj.result == [1, 2], f"Expected [1, 2], but got {result_obj.result}"
+        assert result_obj.error is None
 
 @pytest.mark.asyncio
 class TestErrorHandling:

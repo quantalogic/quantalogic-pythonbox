@@ -107,7 +107,8 @@ async def visit_AsyncFor(self: ASTInterpreter, node: ast.AsyncFor, wrap_exceptio
             raise
         logger.debug(f"AsyncFor iteration with value: {value}, type: {type(value).__name__}")
         await self.assign(node.target, value)
-        logger.debug(f"Assigned item in AsyncFor: value {value}, type {type(value).__name__}")
+        logger.debug(f"Assigned item in AsyncFor: value {value}, type {type(value).__name__}, target: {node.target.id if isinstance(node.target, ast.Name) else 'unknown'}")
+        logger.debug(f"AsyncFor iteration count: {self.iteration_count if hasattr(self, 'iteration_count') else 0}")  # Add a counter if needed, but for now, log per iteration
         try:
             for stmt in node.body:
                 await self.visit(stmt, wrap_exceptions=wrap_exceptions)

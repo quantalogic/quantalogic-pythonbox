@@ -432,19 +432,14 @@ class ASTInterpreter:
 
     async def execute_async(self, node: ast.Module, entry_point: str = None) -> Any:
         self.env_stack[0]['logger'].debug("Starting execute_async visit")
+        self.env_stack[0]['logger'].debug(f"Parsed AST nodes: {[type(n).__name__ for n in ast.walk(node)]}")
         if entry_point:
-            func_node = self.find_function_node(node, entry_point)
-            if func_node:
-                func = await self.visit(func_node)
-                try:
-                    result = await func()
-                    self.env_stack[0]['logger'].debug(f"Function executed, result: {result}, type: {type(result).__name__}, is_generator: {hasattr(result, '__aiter__')}")
-                except Exception as e:
-                    self.env_stack[0]['logger'].error(f"Exception in function execution: {str(e)}, type: {type(e).__name__}")
-                    raise
-                result = result  # Ensure result is set
+            await self.visit(node)  # Ensure all top-level definitions are processed
+            func = self.get_variable(entry_point)
+            if func:
+                result = await func()
             else:
-                raise ValueError(f"Entry point '{entry_point}' not found in the module.")
+                raise ValueError(f"Entry point '{entry_point}' not defined.")
         else:
             result = await self.visit(node)
         local_vars = {k: v for k, v in self.env_stack[-1].items() if not k.startswith('__')}

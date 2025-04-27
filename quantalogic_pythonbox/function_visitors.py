@@ -8,8 +8,16 @@ from quantalogic_pythonbox.exceptions import WrappedException
 
 logger = logging.getLogger(__name__)
 
-async def contains_yield(node):
-    return any(isinstance(n, (ast.Yield, ast.YieldFrom)) for n in ast.walk(node))
+def contains_yield(node):
+    logger.debug(f"Checking for yields in body of node of type {type(node).__name__}")
+    for stmt in node.body:
+        logger.debug(f"Statement type: {type(stmt).__name__}")
+        for n in ast.walk(stmt):
+            if isinstance(n, (ast.Yield, ast.YieldFrom)):
+                logger.debug(f"Yield found in statement of type {type(stmt).__name__}")
+                return True
+    logger.debug('No yield found in body')  
+    return False
 
 
 async def visit_FunctionDef(interpreter, node: ast.FunctionDef, wrap_exceptions: bool = True) -> None:
@@ -46,33 +54,32 @@ async def visit_FunctionDef(interpreter, node: ast.FunctionDef, wrap_exceptions:
 async def visit_AsyncFunctionDef(interpreter, node: ast.AsyncFunctionDef, wrap_exceptions: bool = True) -> Any:
     try:
         logger.debug(f"Visiting AsyncFunctionDef for node at line {node.lineno if hasattr(node, 'lineno') else 'unknown'}")
-        has_yield = any(isinstance(stmt, (ast.Yield, ast.YieldFrom)) for stmt in ast.walk(node))
         
-        # Refactored common definitions to avoid scoping issues
-        closure = interpreter.env_stack[:]
-        pos_kw_params = [arg.arg for arg in node.args.args]
+        # Extract parameter information with proper handling of optional posonlyargs
+        if hasattr(node.args, 'posonlyargs') and node.args.posonlyargs:
+            posonly_arg_names = [p.arg for p in node.args.posonlyargs]
+        else:
+            posonly_arg_names = []
+        pos_kw_params = [arg.arg for arg in node.args.args if arg.arg not in posonly_arg_names]
         vararg_name = node.args.vararg.arg if node.args.vararg else None
         kwonly_params = [arg.arg for arg in node.args.kwonlyargs]
-        logger.debug(f"Debug: node.args.kwonlyargs type: {type(node.args.kwonlyargs)}, value: {node.args.kwonlyargs}, node line {node.lineno if hasattr(node, 'lineno') else 'unknown'}")
-        logger.debug(f"kwonly_params defined in visit_AsyncFunctionDef: {kwonly_params}, node line {node.lineno if hasattr(node, 'lineno') else 'unknown'}")
-        logger.debug(f"kwonly_params after definition: {kwonly_params}, type: {type(kwonly_params)}, node line {node.lineno if hasattr(node, 'lineno') else 'unknown'}")
         kwarg_name = node.args.kwarg.arg if node.args.kwarg else None
-        pos_defaults_values = [await interpreter.visit(default, wrap_exceptions=wrap_exceptions) for default in node.args.defaults]
-        num_pos_defaults = len(pos_defaults_values)
-        pos_defaults = dict(zip(pos_kw_params[-num_pos_defaults:] if num_pos_defaults else [], pos_defaults_values)) if num_pos_defaults else {}
-        kw_defaults_values = [await interpreter.visit(default, wrap_exceptions=wrap_exceptions) if default else None for default in node.args.kw_defaults]
-        logger.debug(f"Debug: Before kw_defaults assignment - kwonly_params: {kwonly_params}, type: {type(kwonly_params)}, node line {node.lineno if hasattr(node, 'lineno') else 'unknown'}")
-        kw_defaults = dict(zip(kwonly_params, kw_defaults_values))
-        kw_defaults = {k: v for k, v in kw_defaults.items() if v is not None}
-        
+        pos_defaults = {param.arg: await interpreter.visit(default, wrap_exceptions=True) for param, default in zip(reversed(node.args.args), reversed(node.args.defaults)) if default is not None}
+        kw_defaults = {param.arg: await interpreter.visit(default, wrap_exceptions=True) if default else None for param, default in zip(node.args.kwonlyargs, node.args.kw_defaults) if default is not None}
+
+        # Check for yield or yield from statements to determine if it's an async generator
+        logger.debug(f"Statements in {node.name}: {[stmt.__class__.__name__ for stmt in ast.walk(node)]}")
+        has_yield = contains_yield(node)
         if has_yield:
-            logger.debug("Detected yield statement, creating AsyncGeneratorFunction")
+            logger.debug(f"Detected async generator function: {node.name}")
+            logger.debug(f"Creating AsyncGeneratorFunction for {node.name}")
             from .async_generator import AsyncGeneratorFunction
-            func = AsyncGeneratorFunction(node, closure, interpreter, pos_kw_params, vararg_name, kwonly_params, kwarg_name, pos_defaults, kw_defaults)
+            func = AsyncGeneratorFunction(node, interpreter.env_stack, interpreter, pos_kw_params, vararg_name, kwonly_params, kwarg_name, pos_defaults, kw_defaults)
         else:
-            logger.debug("No yield statement detected, creating standard AsyncFunction")
+            logger.debug(f"No yield detected, creating standard AsyncFunction: {node.name}")
+            logger.debug(f"Creating standard AsyncFunction for {node.name}")
             from .async_function import AsyncFunction
-            func = AsyncFunction(node, closure, interpreter, pos_kw_params, vararg_name, kwonly_params, kwarg_name, pos_defaults, kw_defaults)
+            func = AsyncFunction(node, interpreter.env_stack, interpreter, pos_kw_params, vararg_name, kwonly_params, kwarg_name, pos_defaults, kw_defaults)
         
         for decorator in reversed(node.decorator_list):
             dec = await interpreter.visit(decorator, wrap_exceptions=wrap_exceptions)
@@ -94,7 +101,7 @@ async def visit_Call(interpreter, node: ast.Call, is_await_context: bool = False
     from .function_utils import Function, AsyncFunction, AsyncGeneratorFunction
     from .execution_utils import create_class_instance, execute_function
     func = await interpreter.visit(node.func, wrap_exceptions=wrap_exceptions)
-
+    
     evaluated_args: List[Any] = []
     for arg in node.args:
         arg_value = await interpreter.visit(arg, wrap_exceptions=wrap_exceptions)
@@ -112,7 +119,10 @@ async def visit_Call(interpreter, node: ast.Call, is_await_context: bool = False
             kwargs.update(unpacked_kwargs)
         else:
             kwargs[kw.arg] = await interpreter.visit(kw.value, wrap_exceptions=wrap_exceptions)
-
+    
+    if hasattr(func, '__name__') and func.__name__ == 'append':
+        logger.debug(f"Debug: Calling append with args: {evaluated_args}, kwargs: {kwargs}")
+    
     if func is str:
         if len(evaluated_args) != 1:
             raise TypeError(f"str() takes exactly one argument ({len(evaluated_args)} given)")
