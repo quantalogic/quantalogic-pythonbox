@@ -215,6 +215,7 @@ async def visit_Call(interpreter, node: ast.Call, is_await_context: bool = False
 
 
 async def visit_Await(interpreter, node: ast.Await, wrap_exceptions: bool = True) -> Any:
+    from .async_generator import AsyncGenerator  # Import here to avoid circular dependency
     coro = await interpreter.visit(node.value, is_await_context=True, wrap_exceptions=wrap_exceptions)
     interpreter.env_stack[0]['logger'].debug(f"Attempting to await object of type '{type(coro).__name__}' in visit_Await")
     if not asyncio.iscoroutine(coro):
@@ -226,7 +227,8 @@ async def visit_Await(interpreter, node: ast.Await, wrap_exceptions: bool = True
         # Propagate StopAsyncIteration directly so user code can catch it
         raise
     except Exception as e:
-        if wrap_exceptions:
+        # Avoid wrapping exceptions for async generator methods
+        if wrap_exceptions and not (hasattr(coro, '__self__') and isinstance(coro.__self__, AsyncGenerator)):
             raise RuntimeError(f"Error awaiting expression: {str(e)}") from e
         else:
             raise

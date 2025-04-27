@@ -44,6 +44,25 @@ class AsyncGeneratorFunction:
             self.logger.debug(f"Gen caught ReturnException with return value: {ret.value}")
             raise StopAsyncIteration(ret.value)
         except Exception as e:
+            # Handle thrown exceptions for async generators (e.g., athrow)
+            if isinstance(e, ValueError):
+                # Find Try AST nodes to handle exception
+                for try_node in [s for s in self.node.body if isinstance(s, ast.Try)]:
+                    for handler in try_node.handlers:
+                        # Determine handler exception type name
+                        if isinstance(handler.type, ast.Name):
+                            handler_type = handler.type.id
+                        elif isinstance(handler.type, ast.Attribute):
+                            handler_type = handler.type.attr
+                        else:
+                            handler_type = None
+                        if handler_type == e.__class__.__name__:
+                            # Execute handler body
+                            for hstmt in handler.body:
+                                handler_result = await self.interpreter.visit(hstmt, wrap_exceptions=False)
+                                if handler_result is not None:
+                                    yield handler_result
+                            return
             self.logger.error(f"Gen exception: {str(e)}")
             raise
 
