@@ -216,6 +216,9 @@ async def visit_Call(interpreter, node: ast.Call, is_await_context: bool = False
 
 async def visit_Await(interpreter, node: ast.Await, wrap_exceptions: bool = True) -> Any:
     coro = await interpreter.visit(node.value, is_await_context=True, wrap_exceptions=wrap_exceptions)
+    interpreter.env_stack[0]['logger'].debug(f"Attempting to await object of type '{type(coro).__name__}' in visit_Await")
+    if not asyncio.iscoroutine(coro):
+        raise TypeError(f"attempt to await a non-coroutine object of type '{type(coro).__name__}'")
     try:
         awaited_result = await asyncio.wait_for(coro, timeout=60)
         return awaited_result

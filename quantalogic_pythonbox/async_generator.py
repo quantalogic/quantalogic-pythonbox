@@ -103,29 +103,53 @@ class AsyncGeneratorFunction:
         self.interpreter = new_interp  # Update interpreter if needed
 
         class AsyncGenerator:
-            def __init__(self, gen_coroutine):
+            def __init__(self, gen_coroutine, gen_name):
                 self.gen_coroutine = gen_coroutine
+                self.gen_name = gen_name
                 self.logger = logging.getLogger(__name__)
 
             async def __anext__(self):
-                self.logger.debug(f"__anext__ called for generator {self.gen_coroutine.cr_code.co_name}, attempting asend(None)")
+                self.logger.debug(f"__anext__ called for generator {self.gen_name}, attempting asend(None)")
                 try:
                     value = await self.gen_coroutine.asend(None)
-                    self.logger.debug(f"__anext__ yielded value: {value}")
-                    self.logger.debug(f"__anext__ call details: coroutine={self.gen_coroutine.cr_code.co_name}, value={value}, type={type(value).__name__}")
+                    self.logger.debug(f"__anext__ yielded value: {value}, type: {type(value).__name__}")
+                    self.logger.debug(f"__anext__ call details: generator={self.gen_name}, value={value}")
                     return value
                 except StopAsyncIteration as e:
-                    self.logger.debug(f"__anext__ raised StopAsyncIteration with value: {getattr(e, 'value', 'No value')}")
-                    self.logger.debug(f"StopAsyncIteration details: type={type(e).__name__}, value={getattr(e, 'value', 'No value')}")
+                    self.logger.debug(f"__anext__ raised StopAsyncIteration for generator {self.gen_name}, value: {getattr(e, 'value', 'No value')}")
                     raise
                 except Exception as exc:
-                    self.logger.error(f"Exception in __anext__: {str(exc)}, type: {type(exc).__name__}")
-                    self.logger.error(f"__anext__ exception details: coroutine={self.gen_coroutine.cr_code.co_name}, exception={str(exc)}, type={type(exc).__name__}")
+                    self.logger.error(f"Exception in __anext__ for generator {self.gen_name}: {str(exc)}, type: {type(exc).__name__}")
                     raise
+
+            async def asend(self, value):
+                self.logger.debug(f"asend called for generator {self.gen_name}, sending value: {value}")
+                try:
+                    result = await self.gen_coroutine.asend(value)
+                    self.logger.debug(f"asend yielded value: {result}")
+                    return result
+                except StopAsyncIteration as e:
+                    raise
+                except Exception as exc:
+                    self.logger.error(f"Exception in asend for generator {self.gen_name}: {str(exc)}")
+                    raise
+
+            async def athrow(self, exc):
+                self.logger.debug(f"athrow called for generator {self.gen_name}, throwing exception: {exc}")
+                try:
+                    result = await self.gen_coroutine.athrow(exc)
+                    self.logger.debug(f"athrow yielded value: {result}")
+                    return result
+                except StopAsyncIteration as e:
+                    raise
+                except Exception as err:
+                    self.logger.error(f"Exception in athrow for generator {self.gen_name}: {str(err)}")
+                    raise
+
             def __aiter__(self):
                 return self
 
         gen_coroutine = self.gen()
-        async_gen_instance = AsyncGenerator(gen_coroutine)
+        async_gen_instance = AsyncGenerator(gen_coroutine, self.node.name)
         self.logger.debug(f"Returning AsyncGenerator instance for {self.node.name}")
         return async_gen_instance
