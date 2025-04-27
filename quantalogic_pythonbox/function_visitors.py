@@ -119,7 +119,24 @@ async def visit_Call(interpreter, node: ast.Call, is_await_context: bool = False
             kwargs.update(unpacked_kwargs)
         else:
             kwargs[kw.arg] = await interpreter.visit(kw.value, wrap_exceptions=wrap_exceptions)
-    
+
+    # Special handling for heapq.nlargest with async key functions
+    if hasattr(func, '__module__') and func.__module__ == 'heapq' and func.__name__ == 'nlargest':
+        n = evaluated_args[0]
+        iterable = evaluated_args[1]
+        keyfunc = kwargs.get('key', None)
+        pairs = []
+        for item in iterable:
+            if keyfunc:
+                k = keyfunc(item)
+                if asyncio.iscoroutine(k):
+                    k = await k
+            else:
+                k = item
+            pairs.append((k, item))
+        pairs.sort(key=lambda pair: pair[0], reverse=True)
+        return [elem for _, elem in pairs][:n]
+
     if hasattr(func, '__name__') and func.__name__ == 'append':
         logger.debug(f"Debug: Calling append with args: {evaluated_args}, kwargs: {kwargs}")
     

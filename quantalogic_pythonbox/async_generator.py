@@ -77,6 +77,11 @@ class AsyncGeneratorFunction:
         for name, value in zip(self.pos_kw_params, args):
             local_frame[name] = value
         
+        # Apply defaults for parameters with default values
+        for param, default in self.pos_defaults.items():
+            if param not in local_frame:
+                local_frame[param] = default
+        
         # Bind keyword arguments using self.kwonly_params and self.kw_defaults
         for param in self.kwonly_params:
             if param in kwargs:
@@ -151,20 +156,10 @@ class AsyncGenerator:
             self.logger.debug(f"asend yielded value: {result}")
             return result
         except StopAsyncIteration as e:
-            ret_val = e.args[0] if e.args else None
-            setattr(e, 'value', ret_val)
+            # Generator completed; return its return value
+            ret_val = getattr(e, 'value', e.args[0] if e.args else None)
             self.logger.debug(f"asend received StopAsyncIteration for generator {self.gen_name}, return value: {ret_val}")
-            raise e
-        except RuntimeError as re:
-            # Unwrap StopAsyncIteration wrapped by Python runtime
-            ctx = re.__context__ or re.__cause__
-            if isinstance(ctx, StopAsyncIteration):
-                ret_val = ctx.args[0] if ctx.args else None
-                new_exc = StopAsyncIteration(ret_val)
-                setattr(new_exc, 'value', ret_val)
-                self.logger.debug(f"asend unwrapped StopAsyncIteration, return value: {ret_val}")
-                raise new_exc
-            raise
+            return ret_val
         except Exception as exc:
             self.logger.error(f"Exception in asend for generator {self.gen_name}: {str(exc)}")
             raise
