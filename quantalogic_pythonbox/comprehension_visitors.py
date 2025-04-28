@@ -12,54 +12,47 @@ async def visit_ListComp(interpreter, node: ast.ListComp, wrap_exceptions: bool 
     if len(node.generators) == 1:
         comp = node.generators[0]
         iterable = await interpreter.visit(comp.iter, wrap_exceptions=wrap_exceptions)
-        logger.debug(f"Retrieved iterable for single generator: {iterable if iterable else 'None'}, type: {type(iterable) if iterable else 'NoneType'}")
-        logger.debug(f"Retrieved iterable of type {type(iterable)} for single generator, has __aiter__: {hasattr(iterable, '__aiter__')}, has __anext__: {hasattr(iterable, '__anext__')}")
+        # handle async iterables (async generators) and sync iterables
         if hasattr(iterable, '__aiter__'):
             result = []
             async for item in iterable:
+                new_frame = interpreter.env_stack[-1].copy()
+                interpreter.env_stack.append(new_frame)
                 try:
-                    # assign comprehension target for async iterable
                     await interpreter.assign(comp.target, item)
                 except TypeError:
-                    # Skip items that don't match destructuring target
+                    interpreter.env_stack.pop()
                     continue
-                # apply any filter clauses
                 if comp.ifs:
-                    conditions = [await interpreter.visit(if_clause, wrap_exceptions=True) for if_clause in comp.ifs]
-                    if not all(conditions):
+                    conds = [await interpreter.visit(if_clause, wrap_exceptions=True) for if_clause in comp.ifs]
+                    if not all(conds):
+                        interpreter.env_stack.pop()
                         continue
-                # evaluate element and append
-                value = await interpreter.visit(node.elt, wrap_exceptions=wrap_exceptions)
-                result.append(value)
-            # pop comprehension frame and return result early
+                val = await interpreter.visit(node.elt, wrap_exceptions=wrap_exceptions)
+                result.append(val)
+                interpreter.env_stack.pop()
             interpreter.env_stack.pop()
             return result
         else:
-            try:
-                logger.debug("Starting for loop for single generator")
-                for item in iterable:
-                    logger.debug(f"Processing item {item} from iterable, item type: {type(item)}")
-                    new_frame = interpreter.env_stack[-1].copy()
-                    interpreter.env_stack.append(new_frame)
+            result = []
+            for item in iterable:
+                new_frame = interpreter.env_stack[-1].copy()
+                interpreter.env_stack.append(new_frame)
+                try:
                     await interpreter.assign(comp.target, item)
-                    logger.debug(f"After assignment for single generator, scope keys: {list(interpreter.env_stack[-1].keys())}, target {comp.target.id if isinstance(comp.target, ast.Name) else 'complex target'} present: {comp.target.id in interpreter.env_stack[-1] if isinstance(comp.target, ast.Name) else 'N/A' }")
-                    logger.debug(f"Assigned item {item} to target for single generator, item type: {type(item)}")
-                    conditions = [await interpreter.visit(if_clause, wrap_exceptions=True) for if_clause in comp.ifs] if comp.ifs else [True]
-                    logger.debug(f"Conditions for single generator: {conditions}, all true? {all(conditions)}")
-                    if all(conditions):
-                        logger.debug(f"Evaluating elt for single generator, scope keys: {list(interpreter.env_stack[-1].keys())}")
-                        value = await interpreter.visit(node.elt, wrap_exceptions=wrap_exceptions)
-                        logger.debug(f"Element to append in list comp: {value}, type: {type(value)}")
-                        result.append(value)
-                        logger.debug(f"Appended value: {value}, type: {type(value)}, result_id: {id(result)}")
+                except TypeError:
                     interpreter.env_stack.pop()
-            except TypeError as e:
-                logger.debug(f"TypeError in for loop for iterable {iterable}: {e}")
-                lineno = getattr(node, "lineno", 1)
-                col = getattr(node, "col_offset", 0)
-                context_line = interpreter.source_lines[lineno - 1] if interpreter.source_lines and lineno <= len(interpreter.source_lines) else ""
-                from .exceptions import WrappedException
-                raise WrappedException(f"Object {iterable} is not iterable", e, lineno, col, context_line) from e
+                    continue
+                if comp.ifs:
+                    conds = [await interpreter.visit(if_clause, wrap_exceptions=True) for if_clause in comp.ifs]
+                    if not all(conds):
+                        interpreter.env_stack.pop()
+                        continue
+                val = await interpreter.visit(node.elt, wrap_exceptions=wrap_exceptions)
+                result.append(val)
+                interpreter.env_stack.pop()
+            interpreter.env_stack.pop()
+            return result
     else:
         async def rec(gen_idx: int):
             num_generators = len(node.generators)
