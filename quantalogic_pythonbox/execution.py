@@ -67,7 +67,7 @@ async def _async_execute_async(
     # Set default allowed modules
     if allowed_modules is None:
         allowed_modules = [
-            'asyncio', 'json', 'math', 'random', 're', 'datetime', 'time',
+            'asyncio', 'json', 'math', 'random', 're', 'inspect', 'datetime', 'time',
             'collections', 'itertools', 'functools', 'operator', 'typing',
             'decimal', 'fractions', 'statistics', 'array', 'bisect', 'heapq',
             'copy', 'enum', 'uuid'
@@ -76,6 +76,21 @@ async def _async_execute_async(
     try:
         dedented_code = textwrap.dedent(code).strip()
         ast_tree = ast.parse(dedented_code)
+        
+        # Detect invalid 'return' with value in async generators (SyntaxError)
+        for node in ast.walk(ast_tree):
+            if isinstance(node, ast.AsyncFunctionDef):
+                # Async generator if contains yield or yield from
+                if any(isinstance(n, (ast.Yield, ast.YieldFrom)) for n in ast.walk(node)):
+                    for stmt in node.body:
+                        if isinstance(stmt, ast.Return) and stmt.value is not None:
+                            error_msg = "SyntaxError: 'return' with value in async generator is invalid syntax"
+                            return AsyncExecutionResult(
+                                result=None,
+                                error=error_msg,
+                                execution_time=time.time() - start_time,
+                                local_variables={}
+                            )
         
         loop = await event_loop_manager.get_loop()
         
