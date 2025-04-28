@@ -17,6 +17,12 @@ async def visit_ListComp(interpreter, node: ast.ListComp, wrap_exceptions: bool 
         if hasattr(iterable, '__aiter__'):
             result = []
             async for item in iterable:
+                try:
+                    # assign comprehension target for async iterable
+                    await interpreter.assign(comp.target, item)
+                except TypeError:
+                    # Skip items that don't match destructuring target
+                    continue
                 # apply any filter clauses
                 if comp.ifs:
                     conditions = [await interpreter.visit(if_clause, wrap_exceptions=True) for if_clause in comp.ifs]
