@@ -98,14 +98,7 @@ class AsyncGeneratorFunction:
                 elif isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Yield):
                     yield_val = await self.interpreter.visit(stmt.value.value, wrap_exceptions=False)
                     self.logger.debug(f"Yielding value from expr: {yield_val}")
-                    try:
-                        yield yield_val
-                    except Exception as e:
-                        self.logger.debug(f"Exception at yield, delegating to AST handler: {e}")
-                        handler_res = await self.interpreter.visit(stmt, wrap_exceptions=True)
-                        if handler_res is not None:
-                            yield handler_res
-                        continue
+                    yield yield_val
                 # Handle Try blocks with exception handling and yields
                 elif isinstance(stmt, ast.Try):
                     try:
@@ -123,14 +116,7 @@ class AsyncGeneratorFunction:
                                 await self.interpreter.assign(inner.targets[0], sent)
                             elif isinstance(inner, ast.Expr) and isinstance(inner.value, ast.Yield):
                                 yield_val = await self.interpreter.visit(inner.value.value, wrap_exceptions=False)
-                                try:
-                                    yield yield_val
-                                except Exception as e:
-                                    self.logger.debug(f"Exception at yield, delegating to AST handler: {e}")
-                                    handler_res = await self.interpreter.visit(inner, wrap_exceptions=True)
-                                    if handler_res is not None:
-                                        yield handler_res
-                                    continue
+                                yield yield_val
                             else:
                                 result = await self.interpreter.visit(inner, wrap_exceptions=False)
                                 if result is not None:
@@ -147,14 +133,7 @@ class AsyncGeneratorFunction:
                                 for hstmt in handler.body:
                                     if isinstance(hstmt, ast.Expr) and isinstance(hstmt.value, ast.Yield):
                                         yield_val = await self.interpreter.visit(hstmt.value.value, wrap_exceptions=False)
-                                        try:
-                                            yield yield_val
-                                        except Exception as e:
-                                            self.logger.debug(f"Exception at yield, delegating to AST handler: {e}")
-                                            handler_res = await self.interpreter.visit(hstmt, wrap_exceptions=True)
-                                            if handler_res is not None:
-                                                yield handler_res
-                                            continue
+                                        yield yield_val
                                     else:
                                         result = await self.interpreter.visit(hstmt, wrap_exceptions=False)
                                         if result is not None:
