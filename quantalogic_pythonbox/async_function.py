@@ -107,7 +107,8 @@ class AsyncFunction:
         missing_args = [param for param in self.posonly_params if param not in local_frame] + [param for param in self.pos_kw_params if param not in local_frame and param not in self.pos_defaults] + [param for param in self.kwonly_params if param not in local_frame and param not in self.kw_defaults]
         if missing_args:
             logger.error(f"Missing required arguments: {missing_args}")
-            raise TypeError(f"Async function '{self.node.name}' missing required arguments: {', '.join(missing_args)}")
+            missing_pos_args = [param for param in missing_args if param in self.posonly_params or param in self.pos_kw_params]
+            raise TypeError(f"Async function '{self.node.name}' missing {len(missing_pos_args)} required positional argument{'s' if len(missing_pos_args) != 1 else ''}")
 
         # Set up the interpreter with the new environment
         new_interp = self.interpreter.spawn_from_env(new_env_stack + [local_frame])
