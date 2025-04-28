@@ -57,6 +57,27 @@ class AsyncGeneratorFunction:
                 if isinstance(stmt, ast.Return):
                     ret_val = await self.interpreter.visit(stmt.value, wrap_exceptions=False) if stmt.value else None
                     raise ReturnException(ret_val)
+                # Handle async for loops
+                if isinstance(stmt, ast.AsyncFor):
+                    iterable = await self.interpreter.visit(stmt.iter, wrap_exceptions=False)
+                    if not hasattr(iterable, '__aiter__'):
+                        raise TypeError(f"Object {iterable} is not an async iterable")
+                    iterator = iterable.__aiter__()
+                    while True:
+                        try:
+                            value = await iterator.__anext__()
+                        except StopAsyncIteration:
+                            break
+                        await self.interpreter.assign(stmt.target, value)
+                        for inner in stmt.body:
+                            if isinstance(inner, ast.Expr) and isinstance(inner.value, ast.Yield):
+                                yield_val = await self.interpreter.visit(inner.value.value, wrap_exceptions=False)
+                                yield yield_val
+                            else:
+                                result = await self.interpreter.visit(inner, wrap_exceptions=False)
+                                if result is not None:
+                                    yield result
+                    continue
                 # Handle assignment with yield (e.g., received = yield x)
                 if isinstance(stmt, ast.Assign) and isinstance(stmt.value, ast.Yield):
                     # Evaluate the yield expression argument
@@ -139,6 +160,15 @@ class AsyncGeneratorFunction:
                                         if result is not None:
                                             yield result
                                 break
+                    # Execute finally block if present
+                    for fstmt in stmt.finalbody:
+                        if isinstance(fstmt, ast.Expr) and isinstance(fstmt.value, ast.Yield):
+                            yield_val = await self.interpreter.visit(fstmt.value.value, wrap_exceptions=False)
+                            yield yield_val
+                        else:
+                            result = await self.interpreter.visit(fstmt, wrap_exceptions=False)
+                            if result is not None:
+                                yield result
                 else:
                     try:
                         result = await self.interpreter.visit(stmt, wrap_exceptions=False)
@@ -243,6 +273,7 @@ class AsyncGenerator:
         try:
             result = await self.gen_coroutine.asend(value)
             self.logger.debug(f"asend yielded value: {result}")
+            return result
         except StopAsyncIteration as e:
             # Generator completed; return its return value
             ret_val = getattr(e, 'value', e.args[0] if e.args else None)
