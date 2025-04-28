@@ -17,8 +17,13 @@ async def visit_Try(interpreter, node: ast.Try, wrap_exceptions: bool = True) ->
         raise
     except Exception as e:
         interpreter.env_stack[0]['logger'].debug(f"Caught exception: {type(e).__name__}")
+        # Unwrap PEP 479 conversion of StopIteration to RuntimeError in async calls
+        if isinstance(e, RuntimeError) and isinstance(getattr(e, '__cause__', None), StopIteration):
+            interpreter.env_stack[0]['logger'].debug("Unwrapping PEP479 RuntimeError to StopIteration")
+            original_e = e.__cause__
+        else:
+            original_e = e
         # Recursively unwrap the exception
-        original_e = e
         while isinstance(original_e, WrappedException):
             original_e = original_e.original_exception
         interpreter.env_stack[0]['logger'].debug(f"Unwrapped exception: {type(original_e).__name__}")
