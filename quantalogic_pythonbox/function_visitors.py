@@ -54,7 +54,12 @@ async def visit_FunctionDef(interpreter, node: ast.FunctionDef, wrap_exceptions:
 async def visit_AsyncFunctionDef(interpreter, node: ast.AsyncFunctionDef, wrap_exceptions: bool = True) -> Any:
     try:
         logger.debug(f"Visiting AsyncFunctionDef for node at line {node.lineno if hasattr(node, 'lineno') else 'unknown'}")
-        
+        # Disallow return with value in async generators (syntax error)
+        from .function_visitors import contains_yield
+        if contains_yield(node):
+            for ret in [n for n in ast.walk(node) if isinstance(n, ast.Return) and n.value is not None]:
+                raise SyntaxError("return with value in async generator is invalid syntax")
+
         # Extract parameter information with proper handling of optional posonlyargs
         if hasattr(node.args, 'posonlyargs') and node.args.posonlyargs:
             posonly_arg_names = [p.arg for p in node.args.posonlyargs]
