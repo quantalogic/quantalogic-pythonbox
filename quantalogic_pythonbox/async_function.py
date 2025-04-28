@@ -131,6 +131,14 @@ class AsyncFunction:
                 local_vars = {k: v for k, v in local_frame.items() if not k.startswith('__')}
                 return ret.value, local_vars
             return ret.value
+        except StopAsyncIteration as stop:
+            # Handle StopAsyncIteration to capture return value from async generators or manual StopAsyncIteration
+            ret_val = getattr(stop, 'value', None)
+            logger.debug(f"{self.node.name} caught StopAsyncIteration with value: {ret_val}")
+            if _return_locals:
+                local_vars = {k: v for k, v in local_frame.items() if not k.startswith('__')}
+                return ret_val, local_vars
+            return ret_val
         except Exception as e:
             logger.error("Exception in {}: {}, type: {}".format(self.node.name, str(e), type(e).__name__))
             raise

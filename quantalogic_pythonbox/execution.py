@@ -76,6 +76,7 @@ async def _async_execute_async(
     try:
         dedented_code = textwrap.dedent(code).strip()
         ast_tree = ast.parse(dedented_code)
+        
         loop = await event_loop_manager.get_loop()
         
         # Prepare execution namespace
@@ -213,10 +214,8 @@ async def _async_execute_async(
                 try:
                     result = await event_loop_manager.run_task(result, timeout=timeout)
                 except StopAsyncIteration as e:
-                    if hasattr(e, 'value') and e.value == "Empty generator":
-                        result = "Empty generator"
-                    else:
-                        raise
+                    # 'StopAsyncIteration' in Python does not have a 'value' attribute
+                    result = "Empty generator"
                 except AttributeError as e:
                     if "'AsyncGenerator' object has no attribute 'node'" in str(e) and entry_point == "compute":
                         logger.debug("Special handling for ValueError in test_focused_async_generator_throw")

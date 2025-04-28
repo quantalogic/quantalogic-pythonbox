@@ -24,7 +24,7 @@ async def visit_Try(interpreter, node: ast.Try, wrap_exceptions: bool = True) ->
         else:
             original_e = e
         # Recursively unwrap the exception
-        while isinstance(original_e, WrappedException):
+        while isinstance(original_e, WrappedException) and hasattr(original_e, "original_exception"):
             original_e = original_e.original_exception
         interpreter.env_stack[0]['logger'].debug(f"Unwrapped exception: {type(original_e).__name__}")
         exception_raised = original_e

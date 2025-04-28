@@ -124,6 +124,18 @@ class AsyncGeneratorFunction:
                     except ReturnException as re:
                         # Finish async generator with return value
                         raise StopAsyncIteration(getattr(re, 'value', None))
+                    except GeneratorExit:
+                        # Handle GeneratorExit: run finally block before closing
+                        for fstmt in stmt.finalbody:
+                            if isinstance(fstmt, ast.Expr) and isinstance(fstmt.value, ast.Yield):
+                                yield_val = await self.interpreter.visit(fstmt.value.value, wrap_exceptions=False)
+                                yield yield_val
+                            else:
+                                result = await self.interpreter.visit(fstmt, wrap_exceptions=False)
+                                if result is not None:
+                                    yield result
+                        # Propagate GeneratorExit to signal closure
+                        raise
                     except Exception as e:
                         for handler in stmt.handlers:
                             exc_type = await self.interpreter._resolve_exception_type(handler.type) if handler.type else Exception
@@ -258,6 +270,14 @@ class AsyncGenerator:
             ret_val = getattr(e, 'value', e.args[0] if e.args else None)
             self.logger.debug(f"asend received StopAsyncIteration for generator {self.gen_name}, return value: {ret_val}")
             return ret_val
+        except RuntimeError as re:
+            # Unwrap StopAsyncIteration wrapped by Python runtime
+            ctx = re.__context__ or re.__cause__
+            if isinstance(ctx, StopAsyncIteration):
+                ret_val = getattr(ctx, 'value', ctx.args[0] if ctx.args else None)
+                self.logger.debug(f"asend unwrapped StopAsyncIteration, return value: {ret_val}")
+                return ret_val
+            raise
         except Exception as exc:
             self.logger.error(f"Exception in asend for generator {self.gen_name}: {str(exc)}")
             raise
