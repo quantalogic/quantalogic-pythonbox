@@ -120,6 +120,7 @@ class ASTInterpreter:
             'setattr': setattr,
             'delattr': delattr,
             'callable': callable,
+            'hasattr': hasattr,
             'hash': hash,
             'id': id,
             'repr': repr,
