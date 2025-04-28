@@ -51,64 +51,109 @@ class AsyncGeneratorFunction:
         # Instrument: Log AST statements in generator body
         for idx, stmt in enumerate(self.node.body):
             self.logger.debug(f"Gen stmt #{idx}: {stmt.__class__.__name__}")
-        for stmt in self.node.body:
-            # Handle assignment with yield (e.g., received = yield x)
-            if isinstance(stmt, ast.Assign) and isinstance(stmt.value, ast.Yield):
-                # Evaluate the yield expression argument
-                yield_val = await self.interpreter.visit(stmt.value.value, wrap_exceptions=False)
-                self.logger.debug(f"Yielding value from assign: {yield_val}")
-                # Yield to caller and capture sent value
-                sent = yield yield_val
-                # Assign the sent value to the target variable
-                await self.interpreter.assign(stmt.targets[0], sent)
-            # Handle bare yield expressions (e.g., yield x)
-            elif isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Yield):
-                yield_val = await self.interpreter.visit(stmt.value.value, wrap_exceptions=False)
-                self.logger.debug(f"Yielding value from expr: {yield_val}")
-                yield yield_val
-            # Handle Try blocks with exception handling and yields
-            elif isinstance(stmt, ast.Try):
-                try:
-                    for inner in stmt.body:
-                        if isinstance(inner, ast.Assign) and isinstance(inner.value, ast.Yield):
-                            yield_val = await self.interpreter.visit(inner.value.value, wrap_exceptions=False)
-                            sent = yield yield_val
-                            await self.interpreter.assign(inner.targets[0], sent)
-                        elif isinstance(inner, ast.Expr) and isinstance(inner.value, ast.Yield):
-                            yield_val = await self.interpreter.visit(inner.value.value, wrap_exceptions=False)
-                            yield yield_val
-                        else:
-                            result = await self.interpreter.visit(inner, wrap_exceptions=False)
-                            if result is not None:
-                                yield result
-                except ReturnException as ret:
-                    # Properly end async generator with return value
-                    self.logger.debug(f"Gen caught ReturnException with return value: {ret.value}")
-                    raise StopAsyncIteration(ret.value)
-                except Exception as e:
-                    for handler in stmt.handlers:
-                        exc_type = await self.interpreter._resolve_exception_type(handler.type) if handler.type else Exception
-                        if isinstance(e, exc_type):
-                            if handler.name:
-                                self.interpreter.set_variable(handler.name, e)
-                            for hstmt in handler.body:
-                                if isinstance(hstmt, ast.Expr) and isinstance(hstmt.value, ast.Yield):
-                                    yield_val = await self.interpreter.visit(hstmt.value.value, wrap_exceptions=False)
+        try:
+            for stmt in self.node.body:
+                # Handle explicit return statements in async generator
+                if isinstance(stmt, ast.Return):
+                    ret_val = await self.interpreter.visit(stmt.value, wrap_exceptions=False) if stmt.value else None
+                    raise ReturnException(ret_val)
+                # Handle assignment with yield (e.g., received = yield x)
+                if isinstance(stmt, ast.Assign) and isinstance(stmt.value, ast.Yield):
+                    # Evaluate the yield expression argument
+                    yield_val = await self.interpreter.visit(stmt.value.value, wrap_exceptions=False)
+                    self.logger.debug(f"Yielding value from assign: {yield_val}")
+                    # Wrap yield to catch exceptions thrown via athrow
+                    try:
+                        sent = yield yield_val
+                    except Exception as e:
+                        self.logger.debug(f"Exception at yield, delegating to AST handler: {e}")
+                        handler_res = await self.interpreter.visit(stmt, wrap_exceptions=True)
+                        if handler_res is not None:
+                            yield handler_res
+                        continue
+                    # Assign the sent value to the target variable
+                    await self.interpreter.assign(stmt.targets[0], sent)
+                # Handle bare yield expressions (e.g., yield x)
+                elif isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Yield):
+                    yield_val = await self.interpreter.visit(stmt.value.value, wrap_exceptions=False)
+                    self.logger.debug(f"Yielding value from expr: {yield_val}")
+                    try:
+                        yield yield_val
+                    except Exception as e:
+                        self.logger.debug(f"Exception at yield, delegating to AST handler: {e}")
+                        handler_res = await self.interpreter.visit(stmt, wrap_exceptions=True)
+                        if handler_res is not None:
+                            yield handler_res
+                        continue
+                # Handle Try blocks with exception handling and yields
+                elif isinstance(stmt, ast.Try):
+                    try:
+                        for inner in stmt.body:
+                            if isinstance(inner, ast.Assign) and isinstance(inner.value, ast.Yield):
+                                yield_val = await self.interpreter.visit(inner.value.value, wrap_exceptions=False)
+                                try:
+                                    sent = yield yield_val
+                                except Exception as e:
+                                    self.logger.debug(f"Exception at yield, delegating to AST handler: {e}")
+                                    handler_res = await self.interpreter.visit(inner, wrap_exceptions=True)
+                                    if handler_res is not None:
+                                        yield handler_res
+                                    continue
+                                await self.interpreter.assign(inner.targets[0], sent)
+                            elif isinstance(inner, ast.Expr) and isinstance(inner.value, ast.Yield):
+                                yield_val = await self.interpreter.visit(inner.value.value, wrap_exceptions=False)
+                                try:
                                     yield yield_val
-                                else:
-                                    result = await self.interpreter.visit(hstmt, wrap_exceptions=False)
-                                    if result is not None:
-                                        yield result
-                            break
-            else:
-                try:
-                    result = await self.interpreter.visit(stmt, wrap_exceptions=False)
-                except ReturnException as ret:
-                    # Properly end async generator with return value
-                    self.logger.debug(f"Gen caught ReturnException with return value: {ret.value}")
-                    raise StopAsyncIteration(ret.value)
-                if result is not None:
-                    yield result
+                                except Exception as e:
+                                    self.logger.debug(f"Exception at yield, delegating to AST handler: {e}")
+                                    handler_res = await self.interpreter.visit(inner, wrap_exceptions=True)
+                                    if handler_res is not None:
+                                        yield handler_res
+                                    continue
+                            else:
+                                result = await self.interpreter.visit(inner, wrap_exceptions=False)
+                                if result is not None:
+                                    yield result
+                    except ReturnException as re:
+                        # Finish async generator with return value
+                        raise StopAsyncIteration(getattr(re, 'value', None))
+                    except Exception as e:
+                        for handler in stmt.handlers:
+                            exc_type = await self.interpreter._resolve_exception_type(handler.type) if handler.type else Exception
+                            if isinstance(e, exc_type):
+                                if handler.name:
+                                    self.interpreter.set_variable(handler.name, e)
+                                for hstmt in handler.body:
+                                    if isinstance(hstmt, ast.Expr) and isinstance(hstmt.value, ast.Yield):
+                                        yield_val = await self.interpreter.visit(hstmt.value.value, wrap_exceptions=False)
+                                        try:
+                                            yield yield_val
+                                        except Exception as e:
+                                            self.logger.debug(f"Exception at yield, delegating to AST handler: {e}")
+                                            handler_res = await self.interpreter.visit(hstmt, wrap_exceptions=True)
+                                            if handler_res is not None:
+                                                yield handler_res
+                                            continue
+                                    else:
+                                        result = await self.interpreter.visit(hstmt, wrap_exceptions=False)
+                                        if result is not None:
+                                            yield result
+                                break
+                else:
+                    try:
+                        result = await self.interpreter.visit(stmt, wrap_exceptions=False)
+                    except ReturnException as ret:
+                        # Properly end async generator with return value
+                        self.logger.debug(f"Gen caught ReturnException with return value: {ret.value}")
+                        raise StopAsyncIteration(ret.value)
+                    if result is not None:
+                        yield result
+        except ReturnException as re:
+            # Finish async generator with return value
+            raise StopAsyncIteration(getattr(re, 'value', None))
+        # No explicit return: exhaustion without a return statement
+        # End of generator
+        raise StopAsyncIteration()
 
     async def __call__(self, *args: Any, **kwargs: Any) -> Any:
         self.logger.debug(f"__call__ invoked for {self.node.name} with args: {args}, kwargs: {kwargs}")
@@ -198,7 +243,6 @@ class AsyncGenerator:
         try:
             result = await self.gen_coroutine.asend(value)
             self.logger.debug(f"asend yielded value: {result}")
-            return result
         except StopAsyncIteration as e:
             # Generator completed; return its return value
             ret_val = getattr(e, 'value', e.args[0] if e.args else None)
@@ -241,21 +285,18 @@ class AsyncGenerator:
             self.interpreter.generator_context['active'] = False
 
     async def aclose(self):
-        # Properly close the async generator, triggering any finally blocks
-        self.interpreter.generator_context['active'] = True
+        """Close the async generator, running any finally blocks."""
         self.logger.debug(f"aclose called for generator {self.gen_name}")
         try:
-            # Use the native aclose of the async generator
-            result = await self.gen_coroutine.aclose()
-            self.logger.debug(f"aclose result: {result}")
-            return result
-        except (StopAsyncIteration, GeneratorExit) as e:
-            # Normalize return value if provided
-            ret_val = getattr(e, 'value', e.args[0] if e.args else None)
-            self.logger.debug(f"aclose caught StopAsyncIteration/GeneratorExit, return value: {ret_val}")
-            return ret_val
-        finally:
-            self.interpreter.generator_context['active'] = False
+            # Throw GeneratorExit into generator to trigger finally
+            await self.gen_coroutine.athrow(GeneratorExit())
+        except (GeneratorExit, StopAsyncIteration):
+            # Generator has closed normally
+            return
+        except Exception as err:
+            # Ignore other exceptions on close
+            self.logger.debug(f"Exception during aclose: {err}")
+            return
 
     def __aiter__(self):
         return self

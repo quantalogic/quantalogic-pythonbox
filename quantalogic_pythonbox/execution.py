@@ -5,6 +5,7 @@ import textwrap
 import time
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
+from quantalogic_pythonbox import async_generator
 
 from .interpreter_core import ASTInterpreter
 from .function_utils import Function, AsyncFunction, AsyncGeneratorFunction
