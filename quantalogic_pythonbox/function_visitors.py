@@ -67,7 +67,7 @@ async def visit_AsyncFunctionDef(interpreter, node: ast.AsyncFunctionDef, wrap_e
         pos_defaults = {param.arg: await interpreter.visit(default, wrap_exceptions=True) for param, default in zip(reversed(node.args.args), reversed(node.args.defaults)) if default is not None}
         kw_defaults = {param.arg: await interpreter.visit(default, wrap_exceptions=True) if default else None for param, default in zip(node.args.kwonlyargs, node.args.kw_defaults) if default is not None}
 
-        # Check for yield or yield from statements to determine if it's an async generator
+        # Check for yield or yield from statements to determine ONLY if it's an async generator
         logger.debug(f"Statements in {node.name}: {[stmt.__class__.__name__ for stmt in ast.walk(node)]}")
         has_yield = contains_yield(node)
         if has_yield:
@@ -119,6 +119,15 @@ async def visit_Call(interpreter, node: ast.Call, is_await_context: bool = False
             kwargs.update(unpacked_kwargs)
         else:
             kwargs[kw.arg] = await interpreter.visit(kw.value, wrap_exceptions=wrap_exceptions)
+
+    # Handle type() calls explicitly
+    if func is type:
+        if len(evaluated_args) == 1:
+            obj = evaluated_args[0]
+            return obj.__class__  # Use __class__ for single-argument type calls
+        elif len(evaluated_args) == 3:
+            return type(*evaluated_args)
+        raise TypeError(f"type() takes 1 or 3 arguments, got {len(evaluated_args)}")
 
     # Special handling for heapq.nlargest with async key functions
     if hasattr(func, '__module__') and func.__module__ == 'heapq' and func.__name__ == 'nlargest':

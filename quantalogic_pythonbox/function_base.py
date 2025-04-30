@@ -115,8 +115,8 @@ class Function:
                 values = []
                 return_value = None
                 
-                for stmt in self.node.body:
-                    try:
+                try:
+                    for stmt in self.node.body:
                         if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Yield):
                             value = await new_interp.visit(stmt.value.value, wrap_exceptions=False) if stmt.value.value else None
                             values.append(value)
@@ -130,7 +130,7 @@ class Function:
                             
                         if isinstance(stmt, ast.Return):
                             return_value = await new_interp.visit(stmt.value, wrap_exceptions=False) if stmt.value else None
-                            break
+                            raise StopIteration(return_value)
                             
                         await new_interp.visit(stmt, wrap_exceptions=False)
                         
@@ -145,10 +145,13 @@ class Function:
                             if iterator:
                                 for val in iterator:
                                     values.append(val)
-                    except ReturnException as ret:
-                        return_value = ret.value
-                        break
-                        
+                except StopIteration as e:
+                    if e.__cause__ is None:  # Only convert manual StopIteration raises
+                        raise RuntimeError("generator raised StopIteration") from e
+                    raise  # Propagate StopIteration from return
+                except ReturnException as ret:
+                    return_value = ret.value
+                
                 # Create a generator that includes the return value
                 def gen_with_return():
                     for val in values:

@@ -169,6 +169,8 @@ class AsyncGeneratorFunction:
                         raise StopAsyncIteration(ret.value)
                     if result is not None:
                         yield result
+        except StopAsyncIteration as e:
+            raise RuntimeError("async generator raised StopAsyncIteration") from e
         except ReturnException as re:
             # Finish async generator with return value
             raise StopAsyncIteration(getattr(re, 'value', None))
@@ -298,19 +300,8 @@ class AsyncGenerator:
             self.logger.debug(f"athrow received StopAsyncIteration for generator {self.gen_name}, return value: {ret_val}")
             return ret_val
         except Exception as err:
-            # Exception thrown into generator but not handled inside gen; attempt to get next yield
-            self.logger.debug(f"athrow exception {err}, attempting to asend None to retrieve next yield")
-            try:
-                next_val = await self.gen_coroutine.asend(None)
-                self.logger.debug(f"athrow recovered next yield value: {next_val}")
-                return next_val
-            except StopAsyncIteration as e2:
-                ret_val2 = e2.args[0] if e2.args else None
-                self.logger.debug(f"athrow recovered completion after exception, return value: {ret_val2}")
-                return ret_val2
-            except Exception as err2:
-                self.logger.error(f"Exception in recovery asend for generator {self.gen_name}: {err2}")
-                raise
+            self.logger.debug(f"athrow exception {err}, re-raising for caller to handle")
+            raise
         finally:
             self.interpreter.generator_context['active'] = False
 

@@ -29,7 +29,7 @@ class GeneratorWrapper:
             if hasattr(e, 'value'):
                 self.return_value = e.value
                 logger.debug(f"Capturing generator return value: {e.value}")
-            raise StopIteration(self.return_value)
+            raise StopIteration(self.return_value)  # Propagate StopIteration with value
 
     def send(self, value):
         if self.closed:

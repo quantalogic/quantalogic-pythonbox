@@ -11,20 +11,15 @@ async def visit_Try(interpreter, node: ast.Try, wrap_exceptions: bool = True) ->
         for stmt in node.body:
             # Execute body without wrapping to allow exceptions like StopAsyncIteration to propagate
             result = await interpreter.visit(stmt, wrap_exceptions=False)
-    except ReturnException:
+    except ReturnException as ret:
         interpreter.env_stack[0]['logger'].debug("Propagating ReturnException")
         # Propagate return after executing finalbody
-        raise
+        raise ret
     except Exception as e:
         interpreter.env_stack[0]['logger'].debug(f"Caught exception: {type(e).__name__}")
-        # Unwrap PEP 479 conversion of StopIteration to RuntimeError in async calls
-        if isinstance(e, RuntimeError) and isinstance(getattr(e, '__cause__', None), StopIteration):
-            interpreter.env_stack[0]['logger'].debug("Unwrapping PEP479 RuntimeError to StopIteration")
-            original_e = e.__cause__
-        else:
-            original_e = e
-        # Recursively unwrap the exception
-        while isinstance(original_e, WrappedException) and hasattr(original_e, "original_exception"):
+        # Unwrap the exception
+        original_e = e
+        while isinstance(original_e, WrappedException):
             original_e = original_e.original_exception
         interpreter.env_stack[0]['logger'].debug(f"Unwrapped exception: {type(original_e).__name__}")
         exception_raised = original_e
@@ -37,8 +32,12 @@ async def visit_Try(interpreter, node: ast.Try, wrap_exceptions: bool = True) ->
                 interpreter.env_stack[0]['logger'].debug("Handler matched")
                 if handler.name:
                     interpreter.set_variable(handler.name, original_e)
-                for stmt in handler.body:
-                    result = await interpreter.visit(stmt, wrap_exceptions=True)
+                try:
+                    for stmt in handler.body:
+                        result = await interpreter.visit(stmt, wrap_exceptions=True)
+                except ReturnException as ret:
+                    interpreter.env_stack[0]['logger'].debug("Propagating ReturnException from handler")
+                    raise ret
                 # Clear current_exception after handling
                 interpreter.current_exception = None
                 break
