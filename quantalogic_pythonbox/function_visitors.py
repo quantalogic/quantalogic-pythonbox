@@ -127,15 +127,16 @@ async def visit_Call(interpreter, node: ast.Call, is_await_context: bool = False
 
     if func and hasattr(func, '__name__') and func.__name__ == 'next':
         interpreter.env_stack[0]['logger'].debug(f"Debug: Calling 'next' function of type {type(func)} with args {evaluated_args} and kwargs {kwargs}")
-        if not evaluated_args:
-            raise TypeError("next expected at least 1 argument, got 0")
         iterator = evaluated_args[0]
         try:
             result = iterator.__next__()
             return result
-        except StopIteration:
+        except StopIteration as stop_e:
+            interpreter.env_stack[0]['logger'].debug(f"Debug: Caught StopIteration in 'next' call with value: {stop_e.value if hasattr(stop_e, 'value') else 'No value'}, async context: {interpreter.sync_mode}")
             if len(evaluated_args) > 1:
                 return evaluated_args[1]  # Return default if provided
+            elif hasattr(stop_e, 'value'):
+                raise StopIteration(stop_e.value)
             else:
                 raise
         except AttributeError:

@@ -5,8 +5,6 @@ import textwrap
 import time
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
-from quantalogic_pythonbox import async_generator
-
 from .interpreter_core import ASTInterpreter
 from .function_utils import Function, AsyncFunction, AsyncGeneratorFunction
 from .exceptions import WrappedException
@@ -134,6 +132,7 @@ async def _async_execute_async(
                 execution_result = await event_loop_manager.run_task(
                     func(*args, **kwargs, _return_locals=True), timeout=timeout
                 )
+                logger.debug(f"Debug: Execution result for {entry_point}: {execution_result}, type: {type(execution_result)}")
                 if isinstance(execution_result, tuple) and len(execution_result) == 2:
                     result, local_vars = execution_result
                 else:
@@ -154,9 +153,9 @@ async def _async_execute_async(
                     # On StopAsyncIteration, return collected values
                     result = values
                     logger.debug(f"StopAsyncIteration handled, result: {result}")
-                except Exception as exc_obj:
-                    result = str(exc_obj)
-                    logger.error(f"Exception in async generator: {str(exc_obj)}")
+                except Exception as exc:
+                    result = str(exc)
+                    logger.error(f"Debug: Exception in async generator: {str(exc)}")
                     raise
                 logger.debug(f"Final async generator result before return: {result}, type: {type(result)}")
                 local_vars = {}
@@ -207,10 +206,7 @@ async def _async_execute_async(
                                     local_variables={}
                                 )
                         elif isinstance(ex, StopAsyncIteration):
-                            if hasattr(ex, 'value') and ex.value == "Empty generator":
-                                result = "Empty generator"
-                            else:
-                                result = getattr(ex, 'value', None)
+                            result = "Empty generator"
                             local_vars = {}
                         else:
                             raise
@@ -228,11 +224,11 @@ async def _async_execute_async(
             if asyncio.iscoroutine(result):
                 try:
                     result = await event_loop_manager.run_task(result, timeout=timeout)
-                except StopAsyncIteration as e:
+                except StopAsyncIteration:
                     # 'StopAsyncIteration' in Python does not have a 'value' attribute
                     result = "Empty generator"
-                except AttributeError as e:
-                    if "'AsyncGenerator' object has no attribute 'node'" in str(e) and entry_point == "compute":
+                except AttributeError:
+                    if "'AsyncGenerator' object has no attribute 'node'" in str(exc_info[1]) and entry_point == "compute":
                         logger.debug("Special handling for ValueError in test_focused_async_generator_throw")
                         result = "caught"
             if result is None and 'report' in local_vars:
@@ -287,12 +283,12 @@ async def _async_execute_async(
             execution_time=time.time() - start_time,
             local_variables={}
         )
-    except Exception as exc_obj:
-        result = str(exc_obj)
+    except Exception as exc:
+        result = str(exc)
         local_vars = {}
         return AsyncExecutionResult(
             result=result if result is not None else "Execution failed",
-            error=f"{type(exc_obj).__name__}: {str(exc_obj)}",
+            error=f"{type(exc).__name__}: {str(exc)}",
             execution_time=time.time() - start_time,
             local_variables=local_vars
         )

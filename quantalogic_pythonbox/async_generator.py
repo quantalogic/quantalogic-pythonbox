@@ -226,36 +226,27 @@ class AsyncGenerator:
         self.logger = logging.getLogger(__name__)
 
     async def __anext__(self):
-        # Mark generator as active
-        self.interpreter.generator_context['active'] = True
-        self.logger.debug(f"gen_coroutine type: {type(self.gen_coroutine).__name__}")
-        self.logger.debug(f"__anext__ called for generator {self.gen_name}, attempting asend(None)")
+        self.logger.debug(f'__anext__ called for generator {self.gen_name}, sending None')
         try:
-            # Attempt to get next yield
             value = await self.gen_coroutine.asend(None)
-            self.logger.debug(f"__anext__ yielded value: {value}")
+            if value is None:
+                self.logger.warning(f'Warning: Yielding None value in __anext__ for generator {self.gen_name}')
+            self.logger.debug(f'Value received and yielding: {value}')
             return value
         except StopAsyncIteration as e:
-            # Normal completion with optional return value
             ret_val = e.args[0] if e.args else None
-            setattr(e, 'value', ret_val)
-            self.interpreter.env_stack[0]['logger'].debug(f"Debug: Raising StopAsyncIteration - exception type: {type(e)}, args: {e.args}, value: {getattr(e, 'value', None)}")
+            self.logger.debug(f'Raising StopAsyncIteration with return value: {ret_val}')
             raise e
         except RuntimeError as re:
-            # Unwrap StopAsyncIteration wrapped by Python runtime
             ctx = re.__context__ or re.__cause__
             if isinstance(ctx, StopAsyncIteration):
                 ret_val = ctx.args[0] if ctx.args else None
-                new_exc = StopAsyncIteration(ret_val)
-                setattr(new_exc, 'value', ret_val)
-                self.logger.debug(f"__anext__ unwrapped StopAsyncIteration, return value: {ret_val}")
-                raise new_exc
+                self.logger.debug(f'Unwrapped StopAsyncIteration with return value: {ret_val}')
+                raise StopAsyncIteration(ret_val)
             raise
         except Exception as exc:
-            self.logger.error(f"Exception in __anext__ for generator {self.gen_name}: {str(exc)}, type: {type(exc).__name__}")
+            self.logger.error(f'Exception in __anext__ for generator {self.gen_name}: {type(exc).__name__}: {str(exc)}')
             raise
-        finally:
-            self.interpreter.generator_context['active'] = False
 
     async def asend(self, value):
         # Mark generator as active

@@ -25,8 +25,11 @@ async def visit_Try(interpreter, node: ast.Try, wrap_exceptions: bool = True) ->
         exception_raised = original_e
         # Track current exception to support bare raise
         interpreter.current_exception = original_e
+        interpreter.env_stack[0]['logger'].debug(f"Entering exception handler loop with {len(node.handlers)} handlers for exception type: {type(original_e).__name__}")
         for handler in node.handlers:
             exc_type = await interpreter._resolve_exception_type(handler.type) if handler.type else Exception
+            interpreter.env_stack[0]['logger'].debug(f"Debug: Handler type resolved to {exc_type.__name__ if exc_type else 'None'}, for handler at line {getattr(handler, 'lineno', 'unknown')} ")
+            interpreter.env_stack[0]['logger'].debug(f"Debug: Checking handler for exception type: {type(original_e).__name__} against {exc_type.__name__ if exc_type else 'None'}")
             interpreter.env_stack[0]['logger'].debug(f"Checking handler for exception type: {exc_type.__name__}")
             if isinstance(original_e, exc_type):
                 interpreter.env_stack[0]['logger'].debug("Handler matched")

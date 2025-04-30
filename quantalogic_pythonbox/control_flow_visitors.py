@@ -110,6 +110,7 @@ async def visit_AsyncFor(self: ASTInterpreter, node: ast.AsyncFor, wrap_exceptio
             logger.error(f"Exception in __anext__: {str(e)}, type: {type(e).__name__}")
             raise
         try:
+            logger.debug(f"Debug in visit_AsyncFor: iterated value {value}")
             for stmt in node.body:
                 await self.visit(stmt, wrap_exceptions=wrap_exceptions)
         except BreakException:
