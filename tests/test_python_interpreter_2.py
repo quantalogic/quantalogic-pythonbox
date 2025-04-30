@@ -686,6 +686,16 @@ def main():
     assert result.result == (1, None)  # Correct expectation per Python semantics
 
 
+def test_built_in_next_with_default_iterator():
+    code = """
+def main():
+    it = iter([1])
+    return next(it), next(it, None)
+"""
+    result = execute_async(code, entry_point="main")
+    assert result.result == (1, None)  # Expecting (1, None) as per standard Python behavior
+
+
 @pytest.mark.asyncio
 async def test_class_static_variable():
     """Test accessing a class-level static variable."""

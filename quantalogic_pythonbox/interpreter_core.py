@@ -443,7 +443,9 @@ class ASTInterpreter:
             await self.visit(node)  # Ensure all top-level definitions are processed
             func = self.get_variable(entry_point)
             if func:
+                self.env_stack[0]['logger'].debug(f"Debug: Calling entry point function {entry_point} of type {type(func)}")
                 result = await func()
+                self.env_stack[0]['logger'].debug(f"Debug: Result from function call: {result}, type: {type(result).__name__}")
             else:
                 raise ValueError(f"Entry point '{entry_point}' not defined.")
         else:

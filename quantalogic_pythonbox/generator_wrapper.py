@@ -30,6 +30,7 @@ class GeneratorWrapper:
             self.yielded_values.append(value)
             return value
         except StopIteration as e:
+            logging.debug(f"Debug: Caught StopIteration in __next__ with value: {e.value if hasattr(e, 'value') else 'No value'}")
             self.closed = True
             val = e.value if hasattr(e, 'value') else None
             self.return_value = val

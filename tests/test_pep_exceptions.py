@@ -134,7 +134,9 @@ async def test_async_generator_return_value_pep479():
     """PEP-479: return with value in async generator yields StopAsyncIteration.value."""
     code = '''
 async def gen():
+    print("Debug: Generator yielding 1")
     yield 1
+    print("Debug: Generator returning 'done'")
     return "done"
 
 async def main():
@@ -144,6 +146,7 @@ async def main():
     try:
         await agen.__anext__()
     except StopAsyncIteration as e:
+        print(f"Debug: Caught StopAsyncIteration with value {e.value}")
         return (first, e.value)
 '''
     result = await execute_async(code, entry_point='main')

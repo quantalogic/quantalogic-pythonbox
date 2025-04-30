@@ -125,6 +125,22 @@ async def visit_Call(interpreter, node: ast.Call, is_await_context: bool = False
         else:
             kwargs[kw.arg] = await interpreter.visit(kw.value, wrap_exceptions=wrap_exceptions)
 
+    if func and hasattr(func, '__name__') and func.__name__ == 'next':
+        interpreter.env_stack[0]['logger'].debug(f"Debug: Calling 'next' function of type {type(func)} with args {evaluated_args} and kwargs {kwargs}")
+        if not evaluated_args:
+            raise TypeError("next expected at least 1 argument, got 0")
+        iterator = evaluated_args[0]
+        try:
+            result = iterator.__next__()
+            return result
+        except StopIteration:
+            if len(evaluated_args) > 1:
+                return evaluated_args[1]  # Return default if provided
+            else:
+                raise
+        except AttributeError:
+            raise TypeError(f"'{type(iterator).__name__}' object is not an iterator")
+
     # Handle type() calls explicitly
     if func is type:
         if len(evaluated_args) == 1:
@@ -205,6 +221,7 @@ async def visit_Call(interpreter, node: ast.Call, is_await_context: bool = False
         return [val async for val in evaluated_args[0]]
 
     if func is sorted:
+        interpreter.env_stack[0]['logger'].debug(f"Debug: Calling async_sorted with iterable type: {type(evaluated_args[0]) if evaluated_args else 'No iterable'}, key: {kwargs.get('key', 'None')}, key type: {type(kwargs.get('key', None)) if 'key' in kwargs else 'No key'}")
         if 'key' in kwargs and callable(kwargs['key']):
             from .async_builtins import async_sorted
             result = await async_sorted(evaluated_args[0] if evaluated_args else [], 

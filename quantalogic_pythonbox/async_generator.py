@@ -239,7 +239,7 @@ class AsyncGenerator:
             # Normal completion with optional return value
             ret_val = e.args[0] if e.args else None
             setattr(e, 'value', ret_val)
-            self.logger.debug(f"__anext__ raised StopAsyncIteration for generator {self.gen_name}, return value: {ret_val}")
+            self.interpreter.env_stack[0]['logger'].debug(f"Debug: Raising StopAsyncIteration - exception type: {type(e)}, args: {e.args}, value: {getattr(e, 'value', None)}")
             raise e
         except RuntimeError as re:
             # Unwrap StopAsyncIteration wrapped by Python runtime
