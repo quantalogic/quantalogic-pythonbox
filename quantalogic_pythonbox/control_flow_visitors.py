@@ -136,7 +136,7 @@ async def visit_Continue(self: ASTInterpreter, node: ast.Continue, wrap_exceptio
 async def visit_Return(self: ASTInterpreter, node: ast.Return, wrap_exceptions: bool = True) -> None:
     logger.debug("Visiting Return with value node of type %s", type(node.value).__name__ if node.value else 'None')
     value: Any = await self.visit(node.value, wrap_exceptions=wrap_exceptions) if node.value is not None else None
-    logger.debug(f"Returning value: {value}, type: {type(value).__name__ if value is not None else 'NoneType'}")
+    logger.debug(f"Executing return with value: {value}, type: {type(value).__name__ if value is not None else 'NoneType'}")
     raise ReturnException(value)
 
 async def visit_IfExp(self: ASTInterpreter, node: ast.IfExp, wrap_exceptions: bool = True) -> Any:

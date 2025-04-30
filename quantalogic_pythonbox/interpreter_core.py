@@ -27,7 +27,6 @@ import uuid
 import psutil
 
 from .exceptions import BreakException, ContinueException, ReturnException, WrappedException
-from .scope import Scope
 
 
 class ASTInterpreter:
@@ -450,8 +449,9 @@ class ASTInterpreter:
                 raise ValueError(f"Entry point '{entry_point}' not defined.")
         else:
             result = await self.visit(node)
+        self.env_stack[0]['logger'].debug(f"Final result in execute_async: {result}, type: {type(result).__name__}")
         local_vars = {k: v for k, v in self.env_stack[-1].items() if not k.startswith('__')}
-        self.env_stack[0]['logger'].debug(f"Returning from execute_async: result type {type(result).__name__}, value {result}")
+        self.env_stack[0]['logger'].debug(f"Returning from execute_async with result type {type(result).__name__}, value {result}")
         return (result, local_vars)
 
     def find_function_node(self, node: ast.Module, func_name: str) -> Optional[ast.AsyncFunctionDef]:
@@ -550,11 +550,9 @@ class ASTInterpreter:
                     except Exception as type_err:
                         self.env_stack[0]['logger'].debug(f"Error resolving exception type: {type_err}")
                         continue  # Skip this handler if type resolution fails
-                    self.env_stack[0]['logger'].debug("Checking handler for exception type: " + str(exc_type) + ", caught exception type: " + str(type(e).__name__))
-                    self.env_stack[0]['logger'].debug(f"Caught exception type: {type(e).__name__}, handler exception type: {exc_type}")
+                    self.env_stack[0]['logger'].debug(f"Resolved exception type for handler: {type(exc_type).__name__}, value: {exc_type}")
+                    self.env_stack[0]['logger'].debug(f"Caught exception: {type(e).__name__}, value: {e}")
                     self.env_stack[0]['logger'].debug(f"Checking if exception {e} is instance of {exc_type} or its cause if wrapped")
-                    self.env_stack[0]['logger'].debug(f"Resolved exc_type: {exc_type}, type of exc_type: {type(exc_type)}")
-                    self.env_stack[0]['logger'].debug(f"Caught exception: {e}, type of caught exception: {type(e)}")
                     if isinstance(e, exc_type) or (isinstance(e, WrappedException) and isinstance(e.__cause__, exc_type)):
                         self.env_stack[0]['logger'].debug("Exception matched, entering except block for handler at line " + str(getattr(handler, 'lineno', 'unknown')))
                         if handler.name:
@@ -564,6 +562,7 @@ class ASTInterpreter:
                             self.env_stack[0]['logger'].debug("Executed statement in except block: " + str(stmt.__class__.__name__) + ", result: " + str(stmt_result))
                             if isinstance(stmt, ast.Return):
                                 value = await self.visit(stmt.value, wrap_exceptions=wrap_exceptions) if stmt.value else None
+                                self.env_stack[0]['logger'].debug(f"Raising ReturnException in except block with value: {value}, type: {type(value).__name__ if value is not None else 'NoneType'}")
                                 raise ReturnException(value)
                         matched = True
                         break
@@ -576,6 +575,7 @@ class ASTInterpreter:
                         self.env_stack[0]['logger'].debug("Executed statement in bare except block: " + str(stmt.__class__.__name__) + ", result: " + str(stmt_result))
                         if isinstance(stmt, ast.Return):
                             value = await self.visit(stmt.value, wrap_exceptions=wrap_exceptions) if stmt.value else None
+                            self.env_stack[0]['logger'].debug(f"Raising ReturnException in bare except block with value: {value}, type: {type(value).__name__ if value is not None else 'NoneType'}")
                             raise ReturnException(value)
                     matched = True
                     break
@@ -590,6 +590,7 @@ class ASTInterpreter:
                     self.env_stack[0]['logger'].debug("Executed statement in orelse block: " + str(stmt.__class__.__name__) + ", result: " + str(stmt_result))
                     if isinstance(stmt, ast.Return):
                         value = await self.visit(stmt.value, wrap_exceptions=wrap_exceptions) if stmt.value else None
+                        self.env_stack[0]['logger'].debug(f"Raising ReturnException in orelse block with value: {value}, type: {type(value).__name__ if value is not None else 'NoneType'}")
                         raise ReturnException(value)
         finally:
             self.env_stack[0]['logger'].debug("Executing finally block if present")
@@ -599,12 +600,10 @@ class ASTInterpreter:
                     self.env_stack[0]['logger'].debug("Executed statement in finally block: " + str(stmt.__class__.__name__) + ", result: " + str(stmt_result))
                     if isinstance(stmt, ast.Return):
                         value = await self.visit(stmt.value, wrap_exceptions=wrap_exceptions) if stmt.value else None
+                        self.env_stack[0]['logger'].debug(f"Raising ReturnException in finally block with value: {value}, type: {type(value).__name__ if value is not None else 'NoneType'}")
                         raise ReturnException(value)
         self.env_stack[0]['logger'].debug("Exiting visit_Try")
         return None
-
-    def new_scope(self):
-        return Scope(self.env_stack)
 
     async def _resolve_exception_type(self, node: Optional[ast.AST]) -> Any:
         if node is None:

@@ -58,15 +58,21 @@ async def visit_YieldFrom(self: ASTInterpreter, node: ast.YieldFrom, wrap_except
             logger.debug("Handling async iterable in YieldFrom")
             try:
                 async for val in iterable:
-                    logger.debug(f"Yielding value from async iterable: {val}")
-                    await self.generator_context['yield_queue'].put(val)
+                    try:
+                        await self.generator_context['yield_queue'].put(val)
+                    except ReturnException as re:
+                        self.env_stack[0]['logger'].debug(f"Caught ReturnException in yield from with value: {re.value}, type: {type(re.value).__name__}")
+                        return re.value
+                    except Exception as ex:
+                        self.env_stack[0]['logger'].debug(f"Exception in yield from: {ex}")
+                        raise
                     sent_value = await self.generator_context['sent_queue'].get()
                     logger.debug(f"Received sent value: {sent_value}")
                     if isinstance(sent_value, BaseException):
                         logger.debug(f"Raising exception: {sent_value}")
                         raise sent_value
             except Exception as e:
-                logger.debug(f"Propagating exception from async iterable: {e}")
+                logger.debug(f"Propagating exception from async iterable: {type(e).__name__}, args: {e.args}")
                 raise
         else:
             logger.debug("Handling sync iterable in YieldFrom")
@@ -80,7 +86,7 @@ async def visit_YieldFrom(self: ASTInterpreter, node: ast.YieldFrom, wrap_except
                         logger.debug(f"Raising exception: {sent_value}")
                         raise sent_value
             except Exception as e:
-                logger.debug(f"Propagating exception from sync iterable: {e}")
+                logger.debug(f"Propagating exception from sync iterable: {type(e).__name__}, args: {e.args}")
                 raise
         return None
     if hasattr(iterable, '__aiter__'):
@@ -89,7 +95,7 @@ async def visit_YieldFrom(self: ASTInterpreter, node: ast.YieldFrom, wrap_except
                 async for value in iterable:
                     yield value
             except Exception as e:
-                logger.debug(f"Propagating exception from async generator: {e}")
+                logger.debug(f"Propagating exception from async generator in YieldFrom: {type(e).__name__}, args: {e.args}")
                 raise
         logger.debug("Returning async generator for YieldFrom")
         return async_gen()
@@ -99,7 +105,7 @@ async def visit_YieldFrom(self: ASTInterpreter, node: ast.YieldFrom, wrap_except
                 for value in iterable:
                     yield value
             except Exception as e:
-                logger.debug(f"Propagating exception from sync generator: {e}")
+                logger.debug(f"Propagating exception from sync generator in YieldFrom: {type(e).__name__}, args: {e.args}")
                 raise
         logger.debug("Returning sync generator for YieldFrom")
         return sync_gen()

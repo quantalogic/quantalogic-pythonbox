@@ -49,6 +49,10 @@ async def visit_FunctionDef(interpreter, node: ast.FunctionDef, wrap_exceptions:
             from .execution_utils import execute_function
             decorated_func = await execute_function(dec, [decorated_func], {})
     interpreter.set_variable(node.name, decorated_func)
+    if any(isinstance(n, (ast.Yield, ast.YieldFrom)) for n in ast.walk(node)):
+        interpreter.env_stack[0]['logger'].debug(f"Function {node.name} is a generator")
+    else:
+        interpreter.env_stack[0]['logger'].debug(f"Function {node.name} is not a generator")
 
 
 async def visit_AsyncFunctionDef(interpreter, node: ast.AsyncFunctionDef, wrap_exceptions: bool = True) -> Any:
