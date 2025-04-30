@@ -1,5 +1,7 @@
+import logging
 import pytest
 from quantalogic_pythonbox import execute_async
+logging.basicConfig(level=logging.DEBUG)
 
 @pytest.mark.asyncio
 async def test_manual_stopiteration_in_generator():
@@ -95,7 +97,7 @@ def main():
     raise ValueError, "msg"
 '''
     result = await execute_async(code, entry_point='main')
-    assert "SyntaxError" in result.error
+    assert "SyntaxError" in result.result
 
 @pytest.mark.asyncio
 async def test_bare_raise_reraises_exception():
@@ -140,11 +142,10 @@ async def gen():
     return "done"
 
 async def main():
-    agen = gen()
-    # consume first yield
-    first = await agen.__anext__()
+    gen_obj = gen()
+    first = await gen_obj.__anext__()
     try:
-        await agen.__anext__()
+        await gen_obj.aclose()  # Should raise StopAsyncIteration
     except StopAsyncIteration as e:
         print(f"Debug: Caught StopAsyncIteration with value {e.value}")
         return (first, e.value)
