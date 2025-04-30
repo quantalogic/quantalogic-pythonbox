@@ -180,6 +180,20 @@ async def visit_Call(interpreter, node: ast.Call, is_await_context: bool = False
             raise TypeError("super() requires class and instance arguments")
         return result
 
+    # Special handling for next() on GeneratorWrapper to propagate StopIteration correctly
+    if func is next and len(evaluated_args) >= 1:
+        gen = evaluated_args[0]
+        default = evaluated_args[1] if len(evaluated_args) > 1 else None
+        from .generator_wrapper import GeneratorWrapper
+        if isinstance(gen, GeneratorWrapper):
+            try:
+                return gen.__next__()
+            except StopIteration as e:
+                if hasattr(e, 'value') and e.value is not None:
+                    return e.value
+                return default
+        return next(gen, default)
+
     if isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Call) and isinstance(node.func.value.func, ast.Name) and node.func.value.func.id == 'super':
         super_call = await interpreter.visit(node.func.value, wrap_exceptions=wrap_exceptions)
         method = getattr(super_call, node.func.attr)

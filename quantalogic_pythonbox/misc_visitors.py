@@ -56,35 +56,51 @@ async def visit_YieldFrom(self: ASTInterpreter, node: ast.YieldFrom, wrap_except
     if 'yield_queue' in self.generator_context and self.generator_context.get('active', False):
         if hasattr(iterable, '__aiter__'):
             logger.debug("Handling async iterable in YieldFrom")
-            async for val in iterable:
-                logger.debug(f"Yielding value from async iterable: {val}")
-                await self.generator_context['yield_queue'].put(val)
-                sent_value = await self.generator_context['sent_queue'].get()
-                logger.debug(f"Received sent value: {sent_value}")
-                if isinstance(sent_value, BaseException):
-                    logger.debug(f"Raising exception: {sent_value}")
-                    raise sent_value
+            try:
+                async for val in iterable:
+                    logger.debug(f"Yielding value from async iterable: {val}")
+                    await self.generator_context['yield_queue'].put(val)
+                    sent_value = await self.generator_context['sent_queue'].get()
+                    logger.debug(f"Received sent value: {sent_value}")
+                    if isinstance(sent_value, BaseException):
+                        logger.debug(f"Raising exception: {sent_value}")
+                        raise sent_value
+            except Exception as e:
+                logger.debug(f"Propagating exception from async iterable: {e}")
+                raise
         else:
             logger.debug("Handling sync iterable in YieldFrom")
-            for val in iterable:
-                logger.debug(f"Yielding value from sync iterable: {val}")
-                await self.generator_context['yield_queue'].put(val)
-                sent_value = await self.generator_context['sent_queue'].get()
-                logger.debug(f"Received sent value: {sent_value}")
-                if isinstance(sent_value, BaseException):
-                    logger.debug(f"Raising exception: {sent_value}")
-                    raise sent_value
+            try:
+                for val in iterable:
+                    logger.debug(f"Yielding value from sync iterable: {val}")
+                    await self.generator_context['yield_queue'].put(val)
+                    sent_value = await self.generator_context['sent_queue'].get()
+                    logger.debug(f"Received sent value: {sent_value}")
+                    if isinstance(sent_value, BaseException):
+                        logger.debug(f"Raising exception: {sent_value}")
+                        raise sent_value
+            except Exception as e:
+                logger.debug(f"Propagating exception from sync iterable: {e}")
+                raise
         return None
     if hasattr(iterable, '__aiter__'):
         async def async_gen():
-            async for value in iterable:
-                yield value
+            try:
+                async for value in iterable:
+                    yield value
+            except Exception as e:
+                logger.debug(f"Propagating exception from async generator: {e}")
+                raise
         logger.debug("Returning async generator for YieldFrom")
         return async_gen()
     else:
         def sync_gen():
-            for value in iterable:
-                yield value
+            try:
+                for value in iterable:
+                    yield value
+            except Exception as e:
+                logger.debug(f"Propagating exception from sync generator: {e}")
+                raise
         logger.debug("Returning sync generator for YieldFrom")
         return sync_gen()
 

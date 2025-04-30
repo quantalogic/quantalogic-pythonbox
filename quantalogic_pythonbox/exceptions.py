@@ -36,3 +36,13 @@ class WrappedException(Exception):
     def __str__(self):
         exc_type = type(self.original_exception).__name__
         return f"{exc_type} at line {self.lineno}, col {self.col}:\n{self.context_line}\nDescription: {self.message}"
+
+
+class GeneratorReturn(Exception):
+    def __init__(self, value: Any) -> None:
+        self.value = value
+
+
+class AsyncGeneratorReturn(Exception):
+    def __init__(self, value: Any) -> None:
+        self.value = value

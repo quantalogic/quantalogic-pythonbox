@@ -8,7 +8,7 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from .interpreter_core import ASTInterpreter
-from .exceptions import ReturnException
+from .exceptions import ReturnException, GeneratorReturn
 from .generator_wrapper import GeneratorWrapper
 
 # Configure logging
@@ -130,7 +130,7 @@ class Function:
                             
                         if isinstance(stmt, ast.Return):
                             return_value = await new_interp.visit(stmt.value, wrap_exceptions=False) if stmt.value else None
-                            raise StopIteration(return_value)
+                            raise GeneratorReturn(return_value)
                             
                         await new_interp.visit(stmt, wrap_exceptions=False)
                         
@@ -143,12 +143,12 @@ class Function:
                             new_interp.generator_context['yield_from'] = False
                             iterator = new_interp.generator_context.get('yield_from_iterator')
                             if iterator:
-                                for val in iterator:
+                                for val in iterable:
                                     values.append(val)
+                except GeneratorReturn as gr:
+                    return_value = gr.value
                 except StopIteration as e:
-                    if e.__cause__ is None:  # Only convert manual StopIteration raises
-                        raise RuntimeError("generator raised StopIteration") from e
-                    raise  # Propagate StopIteration from return
+                    raise RuntimeError("generator raised StopIteration") from e
                 except ReturnException as ret:
                     return_value = ret.value
                 
@@ -156,8 +156,7 @@ class Function:
                 def gen_with_return():
                     for val in values:
                         yield val
-                    # This ensures the return value is captured in StopIteration
-                    return return_value
+                    raise StopIteration(return_value)
                     
                 return GeneratorWrapper(gen_with_return())
                 

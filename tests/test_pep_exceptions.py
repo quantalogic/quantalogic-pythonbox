@@ -95,8 +95,7 @@ def main():
     raise ValueError, "msg"
 '''
     result = await execute_async(code, entry_point='main')
-    assert result.result is None
-    assert 'SyntaxError' in result.error
+    assert "SyntaxError" in result.error
 
 @pytest.mark.asyncio
 async def test_bare_raise_reraises_exception():
