@@ -169,8 +169,6 @@ class AsyncGeneratorFunction:
                         raise StopAsyncIteration(ret.value)
                     if result is not None:
                         yield result
-        except StopAsyncIteration as e:
-            raise RuntimeError("async generator raised StopAsyncIteration") from e
         except ReturnException as re:
             # Finish async generator with return value
             raise StopAsyncIteration(getattr(re, 'value', None))

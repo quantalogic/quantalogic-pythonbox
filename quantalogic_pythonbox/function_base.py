@@ -148,7 +148,8 @@ class Function:
                 except GeneratorReturn as gr:
                     return_value = gr.value
                 except StopIteration as e:
-                    raise RuntimeError("generator raised StopIteration") from e
+                    # Capture generator StopIteration return value without error
+                    return_value = getattr(e, 'value', e.args[0] if e.args else None)
                 except ReturnException as ret:
                     return_value = ret.value
                 
@@ -156,7 +157,7 @@ class Function:
                 def gen_with_return():
                     for val in values:
                         yield val
-                    raise StopIteration(return_value)
+                    return return_value
                     
                 return GeneratorWrapper(gen_with_return())
                 
@@ -175,14 +176,18 @@ class Function:
     def _send_sync(self, gen, value):
         try:
             return next(gen) if value is None else gen.send(value)
-        except StopIteration:
-            raise
+        except StopIteration as e:
+            # Return generator return value if present
+            ret = getattr(e, 'value', e.args[0] if e.args else None)
+            return ret
 
     def _throw_sync(self, gen, exc):
         try:
             return gen.throw(exc)
-        except StopIteration:
-            raise
+        except StopIteration as e:
+            # Return generator return value if present
+            ret = getattr(e, 'value', e.args[0] if e.args else None)
+            return ret
 
     def __get__(self, instance: Any, owner: Any):
         if instance is None:

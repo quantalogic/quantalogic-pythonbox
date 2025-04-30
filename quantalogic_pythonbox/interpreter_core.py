@@ -398,6 +398,8 @@ class ASTInterpreter:
         method_name: str = "visit_" + node.__class__.__name__
         method = getattr(self, method_name, self.generic_visit)
         self.env_stack[0]["logger"].debug("Visiting %s at line %s" % (method_name, getattr(node, 'lineno', 'unknown')))
+        if method_name == "visit_Call":
+            self.env_stack[0]['logger'].debug(f"Debug: Node.func type for Call: {type(node.func).__name__ if node.func else 'None'}")
         
         try:
             if self.sync_mode:

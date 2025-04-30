@@ -4,6 +4,7 @@ Generator wrapper for handling synchronous generators in the PythonBox interpret
 """
 
 import logging
+from quantalogic_pythonbox.exceptions import ReturnException
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG)
@@ -15,11 +16,13 @@ class GeneratorWrapper:
         self.closed = False
         self.return_value = None
         self.yielded_values = []
+        logging.debug("GeneratorWrapper initialized")
 
     def __iter__(self):
         return self
 
     def __next__(self):
+        logging.debug(f"Debug: Calling next on self.gen, type: {type(self.gen).__name__}")
         if self.closed:
             raise StopIteration(self.return_value)
         try:
@@ -28,39 +31,56 @@ class GeneratorWrapper:
             return value
         except StopIteration as e:
             self.closed = True
-            self.return_value = e.value if hasattr(e, 'value') else None
+            val = e.value if hasattr(e, 'value') else None
+            self.return_value = val
             raise StopIteration(self.return_value)
+        except Exception as e:
+            logging.error(f"Debug: Exception in __next__: {type(e).__name__}, message: {str(e)}")
+            raise
 
     def send(self, value):
         if self.closed:
             raise StopIteration(self.return_value)
         try:
+            logging.debug(f"Debug: Calling self.gen.send with value: {value}, type of self.gen: {type(self.gen).__name__}")
             sent_value = self.gen.send(value)
             self.yielded_values.append(sent_value)
             return sent_value
-        except StopIteration as e:
+        except ReturnException as e:
+            logging.debug(f"Debug: Caught ReturnException in send with value: {e.value}")
             self.closed = True
-            self.return_value = e.value if hasattr(e, 'value') else None
+            self.return_value = e.value
+            raise StopIteration(e.value)
+        except StopIteration as e:
+            logging.debug(f"Debug: Caught StopIteration in send with value: {getattr(e, 'value', None)}")
+            self.closed = True
+            val = e.value if hasattr(e, 'value') else None
+            self.return_value = val
             raise StopIteration(self.return_value)
 
     def throw(self, exc_type, exc_val=None, exc_tb=None):
+        logging.debug(f"Debug: GeneratorWrapper.throw called with exc_type: {exc_type}, exc_val: {exc_val}, exc_tb: {exc_tb}")
         if self.closed:
             raise StopIteration(self.return_value)
+        logging.debug(f"Throwing exception of type {exc_type} with value {exc_val} into generator")
         try:
             if exc_val is None:
-                if isinstance(exc_type, type):
-                    exc_val = exc_type()
-                else:
-                    exc_val = exc_type
+                exc_val = exc_type() if isinstance(exc_type, type) else exc_type
             elif isinstance(exc_val, type):
                 exc_val = exc_val()
-            
             thrown_value = self.gen.throw(exc_type, exc_val, exc_tb)
             self.yielded_values.append(thrown_value)
             return thrown_value
-        except StopIteration as e:
+        except ReturnException as e:
+            logging.debug(f"Debug: Caught ReturnException in throw with value: {e.value}")
             self.closed = True
-            self.return_value = e.value if hasattr(e, 'value') else None
+            self.return_value = e.value
+            raise StopIteration(e.value)
+        except StopIteration as e:
+            logging.debug(f"Debug: Caught StopIteration in throw with value: {getattr(e, 'value', None)}")
+            self.closed = True
+            val = getattr(e, 'value', None)
+            self.return_value = val
             raise StopIteration(self.return_value)
 
     def close(self):

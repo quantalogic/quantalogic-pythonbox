@@ -101,6 +101,11 @@ async def visit_Call(interpreter, node: ast.Call, is_await_context: bool = False
     from .function_utils import Function, AsyncFunction, AsyncGeneratorFunction
     from .execution_utils import create_class_instance, execute_function
     func = await interpreter.visit(node.func, wrap_exceptions=wrap_exceptions)
+    interpreter.env_stack[0]['logger'].debug(f"Debug: node.func type in visit_Call: {type(node.func).__name__}")
+    interpreter.env_stack[0]['logger'].debug(f"Calling function: {func.__name__ if hasattr(func, '__name__') else str(func)}")
+    
+    if isinstance(node.func, ast.Attribute) and node.func.attr == 'throw':
+        interpreter.env_stack[0]['logger'].debug("Debug: Attempting to call throw method on object")
     
     evaluated_args: List[Any] = []
     for arg in node.args:
@@ -149,9 +154,6 @@ async def visit_Call(interpreter, node: ast.Call, is_await_context: bool = False
         new_pairs.sort(key=lambda pair: pair[0], reverse=reverse)
         return [elem for _, elem in new_pairs][:n]
 
-    if hasattr(func, '__name__') and func.__name__ == 'append':
-        logger.debug(f"Debug: Calling append with args: {evaluated_args}, kwargs: {kwargs}")
-    
     if func is str:
         if len(evaluated_args) != 1:
             raise TypeError(f"str() takes exactly one argument ({len(evaluated_args)} given)")

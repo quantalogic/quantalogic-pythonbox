@@ -36,6 +36,7 @@ async def visit_Set(self: ASTInterpreter, node: ast.Set, wrap_exceptions: bool =
 async def visit_Attribute(self: ASTInterpreter, node: ast.Attribute, wrap_exceptions: bool = True) -> Any:
     value = await self.visit(node.value, wrap_exceptions=wrap_exceptions)
     attr = node.attr
+    self.env_stack[0]['logger'].debug(f"Accessing attribute: {attr} on object of type {type(value).__name__}")
     prop = getattr(type(value), attr, None)
     if isinstance(prop, property) and isinstance(prop.fget, Function):
         return await prop.fget(value)
