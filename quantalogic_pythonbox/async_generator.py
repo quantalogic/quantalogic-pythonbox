@@ -270,18 +270,16 @@ class AsyncGenerator:
             result = await self.gen_coroutine.asend(value)
             self.logger.debug(f"asend yielded value: {result}")
             return result
-        except StopAsyncIteration as e:
-            # Generator completed; return its return value
-            ret_val = e.args[0] if e.args and len(e.args) > 0 else None
-            self.logger.debug(f"asend received StopAsyncIteration for generator {self.gen_name}, return value: {ret_val}")
-            return ret_val
+        except StopAsyncIteration:
+            # Propagate StopAsyncIteration to __anext__
+            raise
         except RuntimeError as re:
             # Unwrap StopAsyncIteration wrapped by Python runtime
             ctx = re.__context__ or re.__cause__
             if isinstance(ctx, StopAsyncIteration):
                 ret_val = ctx.args[0] if ctx.args and len(ctx.args) > 0 else None
                 self.logger.debug(f"asend unwrapped StopAsyncIteration, return value: {ret_val}")
-                return ret_val
+                raise StopAsyncIteration(ret_val)
             raise
         except Exception as exc:
             self.logger.error(f"Exception in asend for generator {self.gen_name}: {str(exc)}")
@@ -301,7 +299,7 @@ class AsyncGenerator:
             # Generator completed; return its return value
             ret_val = e.args[0] if e.args and len(e.args) > 0 else None
             self.logger.debug(f"athrow received StopAsyncIteration for generator {self.gen_name}, return value: {ret_val}")
-            return ret_val
+            raise StopAsyncIteration(ret_val)
         except Exception as err:
             self.logger.debug(f"athrow exception {err}, re-raising for caller to handle")
             raise
