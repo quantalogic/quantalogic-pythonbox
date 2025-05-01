@@ -247,7 +247,7 @@ class AsyncGenerator:
         except Exception as exc:
             self.logger.error(f'Exception in __anext__ for generator {self.gen_name}: {type(exc).__name__}: {str(exc)}')
             raise
-
+    
     async def asend(self, value):
         # Mark generator as active
         self.interpreter.generator_context['active'] = True
