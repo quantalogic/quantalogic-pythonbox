@@ -15,28 +15,17 @@ async def visit_ListComp(interpreter, node: ast.ListComp, wrap_exceptions: bool 
         logger.debug(f"Debug in visit_ListComp: retrieved iterable of type {type(iterable).__name__}, value: {iterable if isinstance(iterable, (int, str, list, dict)) else 'complex object'}")
         # handle async iterables (async generators) and sync iterables
         if hasattr(iterable, '__aiter__'):
-            iter_obj = iterable.__aiter__()
-            logger.debug('Start manual loop in visit_ListComp')
-            while True:
-                try:
-                    item = await iter_obj.__anext__()
-                    logger.debug(f'Fetched item: {item}')
-                except StopAsyncIteration:
-                    break
+            logger.debug('Start async iteration in visit_ListComp')
+            async for item in iterable:
+                logger.debug(f'Fetched item: {item}')
                 new_frame = interpreter.env_stack[-1].copy()
                 interpreter.env_stack.append(new_frame)
                 try:
                     await interpreter.assign(comp.target, item)
-                    logger.debug(f'Debug: Verified assigned value for {comp.target.id}: {interpreter.env_stack[-1].get(comp.target.id, "not found")}')
-                    logger.debug(f'Debug: comp.ifs length: {len(comp.ifs)}')
-                    logger.debug(f'Assigned item to {comp.target.id if hasattr(comp.target, "id") else "target"}: {item}, scope keys: {list(interpreter.env_stack[-1].keys())}')
                     if comp.ifs and not all([await interpreter.visit(if_clause, wrap_exceptions=True) for if_clause in comp.ifs]):
                         interpreter.env_stack.pop()
                         continue
-                    logger.debug('Debug: No if conditions or conditions passed, proceeding to compute elt')
                     val = await interpreter.visit(node.elt, wrap_exceptions=wrap_exceptions)
-                    logger.debug(f'Debug: Value computed for elt: {val}')
-                    logger.debug(f'Debug: About to append computed value: {val}')
                     result.append(val)
                     logger.debug(f'After add, result length: {len(result)}')
                 except Exception as e:
@@ -45,7 +34,7 @@ async def visit_ListComp(interpreter, node: ast.ListComp, wrap_exceptions: bool 
                 finally:
                     interpreter.env_stack.pop()
             interpreter.env_stack.pop()
-            logger.debug('End of manual loop, final result length: ' + str(len(result)))
+            logger.debug('End of async iteration, final result length: ' + str(len(result)))
             return result
         else:
             result = []
@@ -85,14 +74,9 @@ async def visit_ListComp(interpreter, node: ast.ListComp, wrap_exceptions: bool 
                 iterable = await interpreter.visit(comp.iter, wrap_exceptions=wrap_exceptions)
                 logger.debug(f"Retrieved iterable of type {type(iterable)} for gen_idx {gen_idx}, has __aiter__: {hasattr(iterable, '__aiter__')}, has __anext__: {hasattr(iterable, '__anext__')}")
                 if hasattr(iterable, '__aiter__'):
-                    iter_obj = iterable.__aiter__()
-                    logger.debug('Start manual loop for gen_idx ' + str(gen_idx))
-                    while True:
-                        try:
-                            item = await iter_obj.__anext__()
-                            logger.debug(f'Fetched item for gen_idx {gen_idx}: {item}')
-                        except StopAsyncIteration:
-                            break
+                    logger.debug('Start async iteration for gen_idx ' + str(gen_idx))
+                    async for item in iterable:
+                        logger.debug(f'Fetched item for gen_idx {gen_idx}: {item}')
                         new_frame = interpreter.env_stack[-1].copy()
                         interpreter.env_stack.append(new_frame)
                         try:
@@ -357,15 +341,11 @@ async def visit_GeneratorExp(interpreter, node: ast.GeneratorExp, wrap_exception
             iterable = await interpreter.visit(comp.iter, wrap_exceptions=wrap_exceptions)
             logger.debug(f"Retrieved iterable of type {type(iterable)} for gen_idx 0, has __aiter__: {hasattr(iterable, '__aiter__')}, has __anext__: {hasattr(iterable, '__anext__')}")
             if hasattr(iterable, '__aiter__'):
-                iter_obj = iterable.__aiter__()
-                logger.debug('Start manual loop')
+                logger.debug('Start async iteration')
                 async def gen():
                     try:
-                        while True:
-                            try:
-                                item = await iter_obj.__anext__()
-                            except StopAsyncIteration:
-                                break
+                        async for item in iterable:
+                            logger.debug(f"Received item {item} in async for loop")
                             new_frame = interpreter.env_stack[-1].copy()
                             interpreter.env_stack.append(new_frame)
                             try:
@@ -430,13 +410,8 @@ async def visit_GeneratorExp(interpreter, node: ast.GeneratorExp, wrap_exception
                         iterable = await interpreter.visit(comp.iter, wrap_exceptions=wrap_exceptions)
                         logger.debug(f"Retrieved iterable of type {type(iterable)} for gen_idx {gen_idx}, has __aiter__: {hasattr(iterable, '__aiter__')}, has __anext__: {hasattr(iterable, '__anext__')}")
                         if hasattr(iterable, '__aiter__'):
-                            iter_obj = iterable.__aiter__()
-                            logger.debug('Start loop for gen_idx ' + str(gen_idx))
-                            while True:
-                                try:
-                                    item = await iter_obj.__anext__()
-                                except StopAsyncIteration:
-                                    break
+                            async for item in iterable:
+                                logger.debug(f"Starting async for loop for gen_idx {gen_idx}, item: {item if item else 'None'}, type: {type(item) if item else 'NoneType'}")
                                 new_frame = interpreter.env_stack[-1].copy()
                                 interpreter.env_stack.append(new_frame)
                                 try:

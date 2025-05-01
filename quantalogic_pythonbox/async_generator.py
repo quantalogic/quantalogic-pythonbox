@@ -57,6 +57,20 @@ class AsyncGeneratorFunction:
                 if isinstance(stmt, ast.Return):
                     ret_val = await self.interpreter.visit(stmt.value, wrap_exceptions=False) if stmt.value else None
                     raise ReturnException(ret_val)
+                # Handle sync for loops in async generator
+                if isinstance(stmt, ast.For):
+                    iterable = await self.interpreter.visit(stmt.iter, wrap_exceptions=False)
+                    for item in iterable:
+                        await self.interpreter.assign(stmt.target, item)
+                        for inner in stmt.body:
+                            if isinstance(inner, ast.Expr) and isinstance(inner.value, ast.Yield):
+                                yield_val = await self.interpreter.visit(inner.value.value, wrap_exceptions=False)
+                                yield yield_val
+                            else:
+                                result = await self.interpreter.visit(inner, wrap_exceptions=False)
+                                if result is not None:
+                                    yield result
+                    continue
                 # Handle async for loops
                 if isinstance(stmt, ast.AsyncFor):
                     iterable = await self.interpreter.visit(stmt.iter, wrap_exceptions=False)
