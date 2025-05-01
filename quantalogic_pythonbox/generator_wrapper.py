@@ -24,24 +24,29 @@ class GeneratorWrapper:
     def __next__(self):
         logging.debug(f"Debug: Calling next on self.gen, type: {type(self.gen).__name__}")
         if self.closed:
-            raise StopIteration(self.return_value)
+            e = StopIteration()
+            e.value = self.return_value
+            raise e
         try:
             value = next(self.gen)
             self.yielded_values.append(value)
             return value
         except StopIteration as e:
-            logging.debug(f"Debug: Caught StopIteration in __next__ with value: {e.value if hasattr(e, 'value') else 'No value'}")
+            logging.debug(f"Debug: Caught StopIteration in __next__ with value: {e.args[0] if e.args else 'No value'}")
             self.closed = True
-            val = e.value if hasattr(e, 'value') else None
-            self.return_value = val
-            raise StopIteration(self.return_value)
+            self.return_value = e.args[0] if e.args else None
+            e = StopIteration()
+            e.value = self.return_value
+            raise e
         except Exception as e:
             logging.error(f"Debug: Exception in __next__: {type(e).__name__}, message: {str(e)}")
             raise
 
     def send(self, value):
         if self.closed:
-            raise StopIteration(self.return_value)
+            e = StopIteration()
+            e.value = self.return_value
+            raise e
         try:
             logging.debug(f"Debug: Calling self.gen.send with value: {value}, type of self.gen: {type(self.gen).__name__}")
             sent_value = self.gen.send(value)
@@ -51,18 +56,26 @@ class GeneratorWrapper:
             logging.debug(f"Debug: Caught ReturnException in send with value: {e.value}")
             self.closed = True
             self.return_value = e.value
-            raise StopIteration(e.value)
+            e = StopIteration()
+            e.value = self.return_value
+            raise e
         except StopIteration as e:
-            logging.debug(f"Debug: Caught StopIteration in send with value: {getattr(e, 'value', None)}")
+            logging.debug(f"Debug: Caught StopIteration in send with value: {e.args[0] if e.args else 'No value'}")
             self.closed = True
-            val = e.value if hasattr(e, 'value') else None
-            self.return_value = val
-            raise StopIteration(self.return_value)
+            self.return_value = e.args[0] if e.args else None
+            e = StopIteration()
+            e.value = self.return_value
+            raise e
+        except Exception as e:
+            logging.debug(f"Debug: Exception in send: {type(e).__name__}: {str(e)}")
+            raise
 
     def throw(self, exc_type, exc_val=None, exc_tb=None):
         logging.debug(f"Debug: GeneratorWrapper.throw called with exc_type: {exc_type}, exc_val: {exc_val}, exc_tb: {exc_tb}")
         if self.closed:
-            raise StopIteration(self.return_value)
+            e = StopIteration()
+            e.value = self.return_value
+            raise e
         logging.debug(f"Throwing exception of type {exc_type} with value {exc_val} into generator")
         try:
             if exc_val is None:
@@ -76,13 +89,18 @@ class GeneratorWrapper:
             logging.debug(f"Debug: Caught ReturnException in throw with value: {e.value}")
             self.closed = True
             self.return_value = e.value
-            raise StopIteration(e.value)
+            e = StopIteration()
+            e.value = self.return_value
+            raise e
         except StopIteration as e:
-            logging.debug(f"Debug: Caught StopIteration in throw with value: {getattr(e, 'value', None)}")
+            logging.debug(f"Debug: Caught StopIteration in throw with value: {e.args[0] if e.args else 'No value'}")
             self.closed = True
-            val = getattr(e, 'value', None)
-            self.return_value = val
-            raise StopIteration(self.return_value)
+            self.return_value = e.args[0] if e.args else None
+            e = StopIteration()
+            e.value = self.return_value
+            raise e
+        except Exception as e:
+            raise
 
     def close(self):
         if not self.closed:

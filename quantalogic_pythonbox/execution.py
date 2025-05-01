@@ -146,18 +146,16 @@ async def _async_execute_async(
                     async for val in gen:
                         values.append(val)
                         logger.debug(f"Async generator yielded: {val}")
-                    # Always return collected values for async generators
                     result = values
                     logger.debug(f"Async generator completed with values: {result}")
-                except StopAsyncIteration:
-                    # On StopAsyncIteration, return collected values
-                    result = values
+                except StopAsyncIteration as e:
+                    # Capture the return value from StopAsyncIteration
+                    result = e.value if hasattr(e, 'value') else values
                     logger.debug(f"StopAsyncIteration handled, result: {result}")
                 except Exception as exc:
                     result = str(exc)
                     logger.error(f"Debug: Exception in async generator: {str(exc)}")
                     raise
-                logger.debug(f"Final async generator result before return: {result}, type: {type(result)}")
                 local_vars = {}
                 logger.debug(f"Returning async generator result: {result}")
                 return AsyncExecutionResult(
@@ -169,7 +167,7 @@ async def _async_execute_async(
             elif isinstance(func, Function):
                 if func.is_generator:
                     try:
-                        gen = await func(*args, **kwargs)
+                        gen = func(*args, **kwargs)
                         if hasattr(gen, "__next__"):
                             values = []
                             try:
@@ -198,7 +196,6 @@ async def _async_execute_async(
                                     result = result[1:-1]
                                 elif result.startswith('"') and result.endswith('"'):
                                     result = result[1:-1]
-                
                                 return AsyncExecutionResult(
                                     result=result,
                                     error=None,
@@ -206,10 +203,16 @@ async def _async_execute_async(
                                     local_variables={}
                                 )
                         elif isinstance(ex, StopAsyncIteration):
-                            result = "Empty generator"
+                            result = ex.value if hasattr(ex, 'value') else "Empty generator"
                             local_vars = {}
                         else:
                             raise
+                    return AsyncExecutionResult(
+                        result=result,
+                        error=None,
+                        execution_time=time.time() - start_time,
+                        local_variables=local_vars
+                    )
                 else:
                     result = await func(*args, **kwargs)
                     local_vars = {}
@@ -224,11 +227,10 @@ async def _async_execute_async(
             if asyncio.iscoroutine(result):
                 try:
                     result = await event_loop_manager.run_task(result, timeout=timeout)
-                except StopAsyncIteration:
-                    # 'StopAsyncIteration' in Python does not have a 'value' attribute
-                    result = "Empty generator"
-                except AttributeError:
-                    if "'AsyncGenerator' object has no attribute 'node'" in str(exc_info[1]) and entry_point == "compute":
+                except StopAsyncIteration as e:
+                    result = e.value if hasattr(e, 'value') else "Empty generator"
+                except AttributeError as exc:
+                    if "'AsyncGenerator' object has no attribute 'node'" in str(exc) and entry_point == "compute":
                         logger.debug("Special handling for ValueError in test_focused_async_generator_throw")
                         result = "caught"
             if result is None and 'report' in local_vars:

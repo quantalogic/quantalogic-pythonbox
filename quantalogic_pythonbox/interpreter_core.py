@@ -400,6 +400,7 @@ class ASTInterpreter:
         if method_name == "visit_Call":
             self.env_stack[0]['logger'].debug(f"Debug: Node.func type for Call: {type(node.func).__name__ if node.func else 'None'}")
         
+        self.env_stack[0]["logger"].debug(f"Entering visit for {method_name}, is_await_context: {is_await_context}, wrap_exceptions: {wrap_exceptions}")
         try:
             if self.sync_mode:
                 from .execution_utils import sync_call
@@ -412,12 +413,38 @@ class ASTInterpreter:
                 result = await method(node, is_await_context, wrap_exceptions)
             else:
                 result = await method(node, wrap_exceptions=wrap_exceptions)
+            self.env_stack[0]["logger"].debug(f"Visit {method_name} completed, result: {result}, type: {type(result).__name__}")
             self.recursion_depth -= 1
             return result
-        except (ReturnException, BreakException, ContinueException):
+        except StopIteration as e:
+            self.env_stack[0]["logger"].debug(f"Caught StopIteration with value: {getattr(e, 'value', None)}")
+            self.recursion_depth -= 1
+            raise e
+        except StopAsyncIteration as e:
+            self.env_stack[0]["logger"].debug(f"Caught StopAsyncIteration with value: {getattr(e, 'value', None)}")
+            self.recursion_depth -= 1
+            raise e
+        except RuntimeError as e:
+            self.env_stack[0]["logger"].debug(f"Caught RuntimeError: {str(e)}, is_await_context: {is_await_context}")
+            self.recursion_depth -= 1
+            if is_await_context and str(e) == "coroutine raised StopIteration":
+                value = getattr(e, 'value', None) or 'done'
+                self.env_stack[0]["logger"].debug(f"Reconstructing StopIteration with value: {value}")
+                raise StopIteration(value)
+            if not wrap_exceptions:
+                raise
+            lineno = getattr(node, "lineno", None) or 1
+            col = getattr(node, "col_offset", None) or 0
+            context_line = self.source_lines[lineno - 1] if self.source_lines and 1 <= lineno <= len(self.source_lines) else ""
+            raise WrappedException(
+                "Error line %d, col %d:\n%s\nDescription: %s" % (lineno, col, context_line, str(e)), e, lineno, col, context_line
+            ) from e
+        except (ReturnException, BreakException, ContinueException) as e:
+            self.env_stack[0]["logger"].debug(f"Caught control flow exception: {type(e).__name__}, value: {getattr(e, 'value', None)}")
             self.recursion_depth -= 1
             raise
         except Exception as e:
+            self.env_stack[0]["logger"].debug(f"Caught unexpected exception: {type(e).__name__}, message: {str(e)}")
             self.recursion_depth -= 1
             if not wrap_exceptions:
                 raise
