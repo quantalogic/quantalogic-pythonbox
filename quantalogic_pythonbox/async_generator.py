@@ -29,6 +29,12 @@ _inspect_module.isasyncgen = isasyncgen
 from .interpreter_core import ASTInterpreter
 from .exceptions import ReturnException
 
+class StopAsyncIterationWithValue(StopAsyncIteration):
+    """Custom StopAsyncIteration carrying return value via .value."""
+    @property
+    def value(self):
+        return self.args[0] if self.args and len(self.args) > 0 else None
+
 class AsyncGeneratorFunction:
     def __init__(self, node: ast.AsyncFunctionDef, closure: List[Dict[str, Any]], interpreter: ASTInterpreter,
                  pos_kw_params: List[str], vararg_name: Optional[str], kwonly_params: List[str],
@@ -137,7 +143,7 @@ class AsyncGeneratorFunction:
                                     yield result
                     except ReturnException as re:
                         # Finish async generator with return value
-                        raise StopAsyncIteration(getattr(re, 'value', None))
+                        raise StopAsyncIterationWithValue(re.value)
                     except GeneratorExit:
                         # Handle GeneratorExit: run finally block before closing
                         for fstmt in stmt.finalbody:
@@ -179,16 +185,15 @@ class AsyncGeneratorFunction:
                         result = await self.interpreter.visit(stmt, wrap_exceptions=False)
                     except ReturnException as ret:
                         # Properly end async generator with return value
-                        self.logger.debug(f"Gen caught ReturnException with return value: {ret.value}")
-                        raise StopAsyncIteration(ret.value)
+                        raise StopAsyncIterationWithValue(ret.value)
                     if result is not None:
                         yield result
         except ReturnException as re:
             # Finish async generator with return value
-            raise StopAsyncIteration(getattr(re, 'value', None))
+            raise StopAsyncIterationWithValue(re.value)
         # No explicit return: exhaustion without a return statement
         # End of generator
-        raise StopAsyncIteration()
+        raise StopAsyncIterationWithValue()
 
     async def __call__(self, *args: Any, **kwargs: Any) -> Any:
         self.logger.debug(f"__call__ invoked for {self.node.name} with args: {args}, kwargs: {kwargs}")
@@ -248,15 +253,15 @@ class AsyncGenerator:
                 self.logger.warning(f'Warning: Yielding None in __anext__ for generator {self.gen_name}')
             return value
         except StopAsyncIteration as e:
-            ret_val = e.args[0] if e.args and len(e.args) > 0 else None
-            self.logger.debug(f'Raising StopAsyncIteration with return value: {ret_val} in __anext__')
-            raise StopAsyncIteration(ret_val)
+            ret_val = e.value
+            self.logger.debug(f'Raising StopAsyncIterationWithValue with return value: {ret_val} in __anext__')
+            raise StopAsyncIterationWithValue(ret_val)
         except RuntimeError as re:
             ctx = re.__context__ or re.__cause__
             if isinstance(ctx, StopAsyncIteration):
-                ret_val = ctx.args[0] if ctx.args and len(ctx.args) > 0 else None
-                self.logger.debug(f'Unwrapped StopAsyncIteration with return value: {ret_val} in __anext__')
-                raise StopAsyncIteration(ret_val)
+                ret_val = ctx.value
+                self.logger.debug(f'Unwrapped StopAsyncIterationWithValue with return value: {ret_val} in __anext__')
+                raise StopAsyncIterationWithValue(ret_val)
             raise
         except Exception as exc:
             self.logger.error(f'Exception in __anext__ for generator {self.gen_name}: {type(exc).__name__}: {str(exc)}')
@@ -270,16 +275,18 @@ class AsyncGenerator:
             result = await self.gen_coroutine.asend(value)
             self.logger.debug(f"asend yielded value: {result}")
             return result
-        except StopAsyncIteration:
-            # Propagate StopAsyncIteration to __anext__
-            raise
+        except StopAsyncIteration as e:
+            # Capture StopAsyncIteration return value and return it
+            ret_val = e.value
+            self.logger.debug(f"asend received StopAsyncIteration, return value: {ret_val}")
+            return ret_val
         except RuntimeError as re:
             # Unwrap StopAsyncIteration wrapped by Python runtime
             ctx = re.__context__ or re.__cause__
             if isinstance(ctx, StopAsyncIteration):
-                ret_val = ctx.args[0] if ctx.args and len(ctx.args) > 0 else None
+                ret_val = ctx.value
                 self.logger.debug(f"asend unwrapped StopAsyncIteration, return value: {ret_val}")
-                raise StopAsyncIteration(ret_val)
+                return ret_val
             raise
         except Exception as exc:
             self.logger.error(f"Exception in asend for generator {self.gen_name}: {str(exc)}")
@@ -297,9 +304,9 @@ class AsyncGenerator:
             return result
         except StopAsyncIteration as e:
             # Generator completed; return its return value
-            ret_val = e.args[0] if e.args and len(e.args) > 0 else None
-            self.logger.debug(f"athrow received StopAsyncIteration for generator {self.gen_name}, return value: {ret_val}")
-            raise StopAsyncIteration(ret_val)
+            ret_val = e.value
+            self.logger.debug(f"athrow received StopAsyncIterationWithValue for generator {self.gen_name}, return value: {ret_val}")
+            raise StopAsyncIterationWithValue(ret_val)
         except Exception as err:
             self.logger.debug(f"athrow exception {err}, re-raising for caller to handle")
             raise
