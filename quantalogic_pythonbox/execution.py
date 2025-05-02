@@ -91,21 +91,6 @@ async def _async_execute_async(
                     local_variables={}
                 )
         
-        # Detect invalid 'return' with value in async generators (SyntaxError)
-        for node in ast.walk(ast_tree):
-            if isinstance(node, ast.AsyncFunctionDef):
-                # Async generator if contains yield or yield from
-                if any(isinstance(n, (ast.Yield, ast.YieldFrom)) for n in ast.walk(node)):
-                    for stmt in node.body:
-                        if isinstance(stmt, ast.Return) and stmt.value is not None:
-                            error_msg = "SyntaxError: 'return' with value in async generator is invalid syntax"
-                            return AsyncExecutionResult(
-                                result=None,
-                                error=error_msg,
-                                execution_time=time.time() - start_time,
-                                local_variables={}
-                            )
-        
         loop = await event_loop_manager.get_loop()
         
         # Prepare execution namespace
