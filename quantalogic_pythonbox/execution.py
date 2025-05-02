@@ -9,6 +9,7 @@ from .interpreter_core import ASTInterpreter
 from .function_utils import Function, AsyncFunction, AsyncGeneratorFunction
 from .exceptions import WrappedException
 from .result_function import AsyncExecutionResult
+from .generator_wrapper import GeneratorWrapper
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -119,8 +120,11 @@ async def _async_execute_async(
 
         # module_result is a tuple (result, locals)
         result_raw, local_vars = module_result
+        # Handle GeneratorWrapper for synchronous generators: consume yields into a list
+        if isinstance(result_raw, GeneratorWrapper):
+            result = list(result_raw)
         # Handle StopIteration return values carrying via args or value attribute
-        if isinstance(result_raw, tuple) and local_vars is None:
+        elif isinstance(result_raw, tuple) and local_vars is None:
             # fallback for functions returning tuple directly
             result = result_raw
         else:
