@@ -406,11 +406,11 @@ class ASTInterpreter:
                 from .execution_utils import sync_call
                 func = method.__func__ if hasattr(method, '__func__') else method
                 if method_name == "visit_Call":
-                    result = sync_call(func, self, node, is_await_context, wrap_exceptions)
+                    result = sync_call(func, self, node, is_await_context, False)
                 else:
                     result = sync_call(func, self, node, wrap_exceptions=wrap_exceptions)
             elif method_name == "visit_Call":
-                result = await method(node, is_await_context, wrap_exceptions)
+                result = await method(node, is_await_context, False)
             else:
                 result = await method(node, wrap_exceptions=wrap_exceptions)
             self.env_stack[0]["logger"].debug(f"Visit {method_name} completed, result: {result}, type: {type(result).__name__}")

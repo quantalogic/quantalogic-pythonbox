@@ -74,7 +74,17 @@ async def _async_execute_async(
     
     try:
         dedented_code = textwrap.dedent(code).strip()
-        ast_tree = ast.parse(dedented_code)
+        try:
+            ast_tree = ast.parse(dedented_code)
+        except SyntaxError as e:
+            # Return syntax errors as result
+            error_msg = f"{type(e).__name__}: {str(e)}"
+            return AsyncExecutionResult(
+                result=error_msg,
+                error=None,
+                execution_time=time.time() - start_time,
+                local_variables={}
+            )
         # Detect default entry point 'main' if not specified
         func_names = [node.name for node in ast_tree.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))]
         if entry_point is None and 'main' in func_names:
@@ -178,14 +188,6 @@ async def _async_execute_async(
         while getattr(orig_exc, '__cause__', None):
             orig_exc = orig_exc.__cause__
         error_msg = f"{type(orig_exc).__name__}: {str(orig_exc)}"
-        # Special-case SyntaxError: return error message as result
-        if isinstance(orig_exc, SyntaxError):
-            return AsyncExecutionResult(
-                result=error_msg,
-                error=None,
-                execution_time=time.time() - start_time,
-                local_variables={}
-            )
         return AsyncExecutionResult(
             result=None,
             error=error_msg,
@@ -200,14 +202,6 @@ async def _async_execute_async(
         while getattr(orig_exc, '__cause__', None):
             orig_exc = orig_exc.__cause__
         error_msg = f"{type(orig_exc).__name__}: {str(orig_exc)}"
-        # Special-case SyntaxError: return error message as result
-        if isinstance(orig_exc, SyntaxError):
-            return AsyncExecutionResult(
-                result=error_msg,
-                error=None,
-                execution_time=time.time() - start_time,
-                local_variables=local_vars
-            )
         return AsyncExecutionResult(
             result=None,
             error=error_msg,
