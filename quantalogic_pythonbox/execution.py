@@ -169,8 +169,14 @@ async def _async_execute_async(
             local_variables={}
         )
     except WrappedException as e:
-        # Unwrap to report original exception
-        orig_exc = getattr(e, 'original_exception', e)
+        # Unwrap nested WrappedException and underlying cause to report root exception
+        orig_exc = e
+        # unwrap nested WrappedException
+        while isinstance(orig_exc, WrappedException):
+            orig_exc = orig_exc.original_exception
+        # unwrap exception chain causes
+        while getattr(orig_exc, '__cause__', None):
+            orig_exc = orig_exc.__cause__
         error_msg = f"{type(orig_exc).__name__}: {str(orig_exc)}"
         return AsyncExecutionResult(
             result=None,
@@ -179,11 +185,16 @@ async def _async_execute_async(
             local_variables={}
         )
     except Exception as exc:
-        # Generic exception: report error with None result
+        # Generic exception: report error with None result, unwrap original cause
         local_vars = {}
+        # Unwrap to the original exception if wrapped via __cause__
+        orig_exc = exc
+        while getattr(orig_exc, '__cause__', None):
+            orig_exc = orig_exc.__cause__
+        error_msg = f"{type(orig_exc).__name__}: {str(orig_exc)}"
         return AsyncExecutionResult(
             result=None,
-            error=f"{type(exc).__name__}: {str(exc)}",
+            error=error_msg,
             execution_time=time.time() - start_time,
             local_variables=local_vars
         )
