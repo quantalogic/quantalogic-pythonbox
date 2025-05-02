@@ -154,13 +154,15 @@ async def visit_Call(interpreter, node: ast.Call, is_await_context: bool = False
                 result = iterator.__next__()
             return result
         except StopIteration as stop_e:
-            interpreter.env_stack[0]['logger'].debug("Debug: Caught StopIteration in 'next' call with value: {}, async context: {}".format(stop_e.value if hasattr(stop_e, 'value') else 'No value', interpreter.sync_mode))
+            interpreter.env_stack[0]['logger'].debug("Debug: Caught StopIteration in 'next' call with value: {}, async context: {}".format(
+                getattr(stop_e, 'value', stop_e.args[0] if stop_e.args else 'No value'), interpreter.sync_mode))
             if len(evaluated_args) > 1:
                 return evaluated_args[1]  # Return default if provided
-            elif hasattr(stop_e, 'value'):
-                raise ReturnException(stop_e.value)
             else:
-                raise
+                orig_val = getattr(stop_e, 'value', None)
+                if orig_val is None and stop_e.args:
+                    orig_val = stop_e.args[0]
+                raise StopIteration(orig_val)
         except StopAsyncIteration as stop_async_e:
             interpreter.env_stack[0]['logger'].debug("Debug: Caught StopAsyncIteration in 'next' call with value: {}, async context: {}".format(stop_async_e.value if hasattr(stop_async_e, 'value') else 'No value', interpreter.sync_mode))
             if len(evaluated_args) > 1:
