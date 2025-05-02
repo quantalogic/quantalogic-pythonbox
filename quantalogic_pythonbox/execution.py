@@ -75,6 +75,10 @@ async def _async_execute_async(
     try:
         dedented_code = textwrap.dedent(code).strip()
         ast_tree = ast.parse(dedented_code)
+        # Detect default entry point 'main' if not specified
+        func_names = [node.name for node in ast_tree.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))]
+        if entry_point is None and 'main' in func_names:
+            entry_point = 'main'
         # Check if specified entry_point exists among defined functions
         if entry_point:
             # collect top-level function and async function names
