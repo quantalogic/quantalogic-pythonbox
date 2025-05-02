@@ -103,8 +103,22 @@ async def visit_AsyncFunctionDef(interpreter, node: ast.AsyncFunctionDef, wrap_e
 
 async def visit_Call(interpreter, node: ast.Call, is_await_context: bool = False, wrap_exceptions: bool = True) -> Any:
     from .function_utils import Function, AsyncFunction, AsyncGeneratorFunction
-    from .execution_utils import create_class_instance, execute_function
+    from .execution_utils import create_class_instance
     func = await interpreter.visit(node.func, wrap_exceptions=wrap_exceptions)
+    # Handle bare super() calls to bind __class__ context
+    if isinstance(node.func, ast.Name) and node.func.id == 'super' and not node.args and not node.keywords:
+        # zero-arg super: bind to local 'self'
+        instance = None
+        for frame in reversed(interpreter.env_stack):
+            if 'self' in frame:
+                instance = frame['self']
+                break
+        if instance is None:
+            # fallback to default super
+            func = super
+        else:
+            func = super(type(instance), instance)
+        return func
     interpreter.env_stack[0]['logger'].debug("Debug: node.func type in visit_Call: {}".format(type(node.func).__name__))
     interpreter.env_stack[0]['logger'].debug("Calling function: {}{}".format(func.__name__ if hasattr(func, '__name__') else str(func), ' (async)' if asyncio.iscoroutinefunction(func) else ''))
     
@@ -164,6 +178,32 @@ async def visit_Call(interpreter, node: ast.Call, is_await_context: bool = False
             return type(*evaluated_args)
         raise TypeError("type() takes 1 or 3 arguments, got {}".format(len(evaluated_args)))
 
+    # Special handling for method calls on super() objects
+    if isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Call) \
+       and isinstance(node.func.value.func, ast.Name) and node.func.value.func.id == 'super':
+        from .execution_utils import execute_function
+        call_node = node.func.value
+        # bind zero-arg super to local 'self'
+        if not call_node.args and not call_node.keywords:
+            instance = None
+            for frame in reversed(interpreter.env_stack):
+                if 'self' in frame:
+                    instance = frame['self']
+                    break
+            if instance is None:
+                # fallback to dynamic super evaluation
+                super_call = await interpreter.visit(call_node, wrap_exceptions=wrap_exceptions)
+            else:
+                super_call = super(type(instance), instance)
+        else:
+            super_call = await interpreter.visit(call_node, wrap_exceptions=wrap_exceptions)
+        method = getattr(super_call, node.func.attr)
+        return await execute_function(method, evaluated_args, kwargs)
+
+    if func is list and len(evaluated_args) == 1 and hasattr(evaluated_args[0], '__aiter__'):
+        # Convert async iterable to list
+        return [val async for val in evaluated_args[0]]
+
     # Special handling for heapq.nlargest with async key functions
     if hasattr(func, '__module__') and func.__module__ == 'heapq' and func.__name__ == 'nlargest':
         n = evaluated_args[0]
@@ -210,7 +250,7 @@ async def visit_Call(interpreter, node: ast.Call, is_await_context: bool = False
         )
         return result
 
-    if func in (range, list, dict, set, tuple, frozenset):
+    if func in (range, dict, set, tuple, frozenset):
         return func(*evaluated_args, **kwargs)
 
     if inspect.isclass(func):
