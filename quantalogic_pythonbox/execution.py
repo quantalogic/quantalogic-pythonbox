@@ -75,6 +75,17 @@ async def _async_execute_async(
     try:
         dedented_code = textwrap.dedent(code).strip()
         ast_tree = ast.parse(dedented_code)
+        # Check if specified entry_point exists among defined functions
+        if entry_point:
+            # collect top-level function and async function names
+            func_names = [node.name for node in ast_tree.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))]
+            if entry_point not in func_names:
+                return AsyncExecutionResult(
+                    result=None,
+                    error=f"Entry point '{entry_point}' not found",
+                    execution_time=time.time() - start_time,
+                    local_variables={}
+                )
         
         # Detect invalid 'return' with value in async generators (SyntaxError)
         for node in ast.walk(ast_tree):
