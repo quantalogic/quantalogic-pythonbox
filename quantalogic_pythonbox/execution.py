@@ -167,7 +167,7 @@ async def _async_execute_async(
             elif isinstance(func, Function):
                 if func.is_generator:
                     try:
-                        gen = func(*args, **kwargs)
+                        gen = await func(*args, **kwargs)
                         if hasattr(gen, "__next__"):
                             values = []
                             try:
