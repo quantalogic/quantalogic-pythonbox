@@ -4,7 +4,7 @@ import inspect
 from typing import Any, Dict, List
 import logging
 import traceback
-from quantalogic_pythonbox.exceptions import WrappedException
+from quantalogic_pythonbox.exceptions import WrappedException, ReturnException
 
 logger = logging.getLogger(__name__)
 
@@ -158,7 +158,7 @@ async def visit_Call(interpreter, node: ast.Call, is_await_context: bool = False
             if len(evaluated_args) > 1:
                 return evaluated_args[1]  # Return default if provided
             elif hasattr(stop_e, 'value'):
-                raise StopIteration(stop_e.value)
+                raise ReturnException(stop_e.value)
             else:
                 raise
         except StopAsyncIteration as stop_async_e:
