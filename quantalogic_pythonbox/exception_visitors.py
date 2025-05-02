@@ -72,12 +72,15 @@ async def visit_Try(interpreter, node: ast.Try, wrap_exceptions: bool = True) ->
 
 
 async def visit_TryStar(interpreter, node: ast.TryStar, wrap_exceptions: bool = True) -> Any:
-    from .exceptions import WrappedException
+    from .exceptions import WrappedException, StopAsyncIterationWithValue
     result = None
     interpreter.env_stack[0]['logger'].debug("Entering visit_TryStar")
     try:
         for stmt in node.body:
             result = await interpreter.visit(stmt, wrap_exceptions=True)
+    except StopAsyncIterationWithValue as e:
+        interpreter.env_stack[0]['logger'].debug(f"Caught StopAsyncIterationWithValue in TryStar: {e.value}")
+        interpreter.env_stack[0]['__return__'] = e.value
     except Exception as e:
         interpreter.env_stack[0]['logger'].debug(f"Caught exception in TryStar: {type(e).__name__}")
         for handler in node.handlers:

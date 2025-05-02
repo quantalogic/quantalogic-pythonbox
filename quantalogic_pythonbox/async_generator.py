@@ -237,10 +237,13 @@ class AsyncGenerator:
         # track return yield for async generators
         self._return_yielded = False
         self._last_return = None
+        # Create a mock agenerator attribute that mimics Python's internal structure
+        self.agenerator = _MockGeneratorWithFrame(self)
 
     def __getattr__(self, name):
-        # support g.generator.gi_frame.f_locals.get('__return__') in tests
+        # Fallback for any attributes not explicitly defined
         if name == 'generator':
+            # For backward compatibility with old code
             class FrameView:
                 def __init__(self, locals_):
                     self.f_locals = locals_
@@ -261,8 +264,9 @@ class AsyncGenerator:
         except StopAsyncIterationWithValue as e:
             # Store return value and propagate via StopAsyncIterationWithValue
             self._last_return = e.value
+            self.agenerator._update_return(e.value)  # Update the return value in the mock generator
             self.logger.debug(f"Return value for generator {self.gen_name}: {e.value}")
-            raise StopAsyncIterationWithValue(e.value)
+            raise StopAsyncIteration(e.value)
         except StopAsyncIteration:
             self.logger.debug(f'Raising StopAsyncIteration without value in __anext__')
             raise
@@ -270,7 +274,9 @@ class AsyncGenerator:
             ctx = re.__context__ or re.__cause__
             if isinstance(ctx, StopAsyncIterationWithValue):
                 self.logger.debug(f'Unwrapped StopAsyncIterationWithValue with return value: {ctx.value} in __anext__')
-                raise StopAsyncIterationWithValue(ctx.value)
+                self._last_return = ctx.value
+                self.agenerator._update_return(ctx.value)  # Update the return value in the mock generator
+                raise StopAsyncIteration()
             elif isinstance(ctx, StopAsyncIteration):
                 self.logger.debug(f'Unwrapped StopAsyncIteration without value in __anext__')
                 raise StopAsyncIteration()
@@ -340,3 +346,26 @@ class AsyncGenerator:
 
     def __aiter__(self):
         return self
+
+class _MockGeneratorWithFrame:
+    """
+    Mock class that mimics Python's internal generator structure for async generators.
+    This allows accessing the return value through g.agenerator.gi_frame.f_locals.get('__return__')
+    """
+    def __init__(self, generator):
+        self.generator = generator
+        self._return_value = None
+        # Create a frame with locals to store return value
+        self.gi_frame = _MockFrame({'__return__': None})
+    
+    def _update_return(self, value):
+        """Update the return value in the frame locals"""
+        self._return_value = value
+        self.gi_frame.f_locals['__return__'] = value
+
+class _MockFrame:
+    """
+    Mock class that mimics Python's frame object with locals.
+    """
+    def __init__(self, locals_dict):
+        self.f_locals = locals_dict
