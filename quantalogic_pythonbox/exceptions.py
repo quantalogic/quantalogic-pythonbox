@@ -46,3 +46,10 @@ class GeneratorReturn(Exception):
 class AsyncGeneratorReturn(Exception):
     def __init__(self, value: Any) -> None:
         self.value = value
+
+
+class StopAsyncIterationWithValue(StopAsyncIteration):
+    """Custom StopAsyncIteration carrying return value via .value."""
+    def __init__(self, value: Any):
+        super().__init__()
+        self.value = value

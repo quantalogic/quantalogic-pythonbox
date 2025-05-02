@@ -26,7 +26,7 @@ import uuid
 
 import psutil
 
-from .exceptions import BreakException, ContinueException, ReturnException, WrappedException
+from .exceptions import BreakException, ContinueException, ReturnException, WrappedException, StopAsyncIterationWithValue
 
 
 class ASTInterpreter:
@@ -466,14 +466,21 @@ class ASTInterpreter:
         self.env_stack[0]['logger'].debug("Starting execute_async visit")
         self.env_stack[0]['logger'].debug(f"Parsed AST nodes: {[type(n).__name__ for n in ast.walk(node)]}")
         if entry_point:
-            await self.visit(node)  # Ensure all top-level definitions are processed
+            # Process definitions and call entry-point
+            await self.visit(node)
             func = self.get_variable(entry_point)
-            if func:
-                self.env_stack[0]['logger'].debug(f"Debug: Calling entry point function {entry_point} of type {type(func)}")
-                result = await func()
-                self.env_stack[0]['logger'].debug(f"Debug: Result from function call: {result}, type: {type(result).__name__}")
-            else:
+            if not func:
                 raise ValueError(f"Entry point '{entry_point}' not defined.")
+            self.env_stack[0]['logger'].debug(f"Debug: Calling entry point function {entry_point} of type {type(func)}")
+            try:
+                result = await func()
+            except StopAsyncIterationWithValue as e:
+                # Async generator return
+                result = e.value
+            except StopIteration as e:
+                # Sync generator or return in try/except
+                result = getattr(e, 'value', None)
+            self.env_stack[0]['logger'].debug(f"Debug: Result from function call: {result}, type: {type(result).__name__}")
         else:
             result = await self.visit(node)
         self.env_stack[0]['logger'].debug(f"Final result in execute_async: {result}, type: {type(result).__name__}")
@@ -665,10 +672,13 @@ class ASTInterpreter:
         value = await self.visit(node.value, wrap_exceptions=True)
         try:
             result = await value
+        except StopAsyncIterationWithValue:
+            # Preserve return value of async generator
+            raise
+        except StopAsyncIteration:
+            # Standard generator exhaustion
+            raise
         except Exception as e:
-            # Propagate StopAsyncIteration without wrapping to allow async generator return value handling
-            if isinstance(e, StopAsyncIteration):
-                raise
             if wrap_exceptions:
                 raise RuntimeError(f"Error awaiting expression: {str(e)}") from e
             else:

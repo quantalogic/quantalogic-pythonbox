@@ -38,6 +38,12 @@ async def visit_While(self: ASTInterpreter, node: ast.While, wrap_exceptions: bo
         try:
             for stmt in node.body:
                 await self.visit(stmt, wrap_exceptions=wrap_exceptions)
+        except StopAsyncIteration:
+            # Propagate to user try/except when wrapping is disabled
+            if not wrap_exceptions:
+                raise
+            logger.debug("StopAsyncIteration in While, breaking loop")
+            break
         except BreakException:
             logger.debug("Break in While")
             break

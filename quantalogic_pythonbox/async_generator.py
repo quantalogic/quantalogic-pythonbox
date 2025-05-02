@@ -26,7 +26,6 @@ def isasyncgen(obj):
     return isinstance(obj, AsyncGenerator) or _orig_isasyncgen(obj)
 _inspect_module.isasyncgen = isasyncgen
 
-from .interpreter_core import ASTInterpreter
 from .exceptions import ReturnException
 
 class StopAsyncIterationWithValue(StopAsyncIteration):
@@ -36,9 +35,10 @@ class StopAsyncIterationWithValue(StopAsyncIteration):
         self.value = value  # Directly set value as an attribute
 
 class AsyncGeneratorFunction:
-    def __init__(self, node: ast.AsyncFunctionDef, closure: List[Dict[str, Any]], interpreter: ASTInterpreter,
+    def __init__(self, node: ast.AsyncFunctionDef, closure: List[Dict[str, Any]], interpreter,  # Local import of ASTInterpreter inside methods to avoid circular import
                  pos_kw_params: List[str], vararg_name: Optional[str], kwonly_params: List[str],
                  kwarg_name: Optional[str], pos_defaults: Dict[str, Any], kw_defaults: Dict[str, Any]) -> None:
+        from .interpreter_core import ASTInterpreter  # Local import
         self.node: ast.AsyncFunctionDef = node
         self.closure: List[Dict[str, Any]] = closure[:]
         self.interpreter: ASTInterpreter = interpreter
@@ -201,6 +201,7 @@ class AsyncGeneratorFunction:
         raise StopAsyncIteration()
 
     async def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        from .interpreter_core import ASTInterpreter  # Local import
         self.logger.debug(f"__call__ invoked for {self.node.name} with args: {args}, kwargs: {kwargs}")
         logger.debug(f"Starting AsyncGeneratorFunction {self.node.name} with args: {args}, kwargs: {kwargs}")
         
@@ -279,7 +280,7 @@ class AsyncGenerator:
             return result
         except StopAsyncIterationWithValue as e:
             self.logger.debug(f"asend received StopAsyncIterationWithValue, return value: {e.value}")
-            return e.value
+            raise StopAsyncIterationWithValue(e.value)
         except StopAsyncIteration:
             self.logger.debug(f"asend received StopAsyncIteration without value")
             raise
@@ -287,7 +288,7 @@ class AsyncGenerator:
             ctx = re.__context__ or re.__cause__
             if isinstance(ctx, StopAsyncIterationWithValue):
                 self.logger.debug(f"asend unwrapped StopAsyncIterationWithValue, return value: {ctx.value}")
-                return ctx.value
+                raise StopAsyncIterationWithValue(ctx.value)
             elif isinstance(ctx, StopAsyncIteration):
                 self.logger.debug(f"asend unwrapped StopAsyncIteration without value")
                 raise StopAsyncIteration()

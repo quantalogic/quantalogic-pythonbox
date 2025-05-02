@@ -108,150 +108,35 @@ async def _async_execute_async(
         interpreter.loop = loop
         interpreter.initialize_visitors()  # Initialize visitor methods
         
-        async def run_execution():
-            return await interpreter.execute_async(ast_tree)
-        
-        module_result = await event_loop_manager.run_task(run_execution(), timeout=timeout)
-        
-        # Check for errors in module execution result
-        if isinstance(module_result[0], str) and 'Error' in module_result[0]:  
-            return AsyncExecutionResult(
-                result=None,
-                error=module_result[0],
-                execution_time=time.time() - start_time,
-                local_variables=module_result[1]
-            )
-        
-        if entry_point:                
-            func = interpreter.env_stack[0].get(entry_point)
-            if not func:
-                raise NameError(f"Function '{entry_point}' not found in the code")
-            args = args or ()
-            kwargs = kwargs or {}
-            if isinstance(func, AsyncFunction):
-                execution_result = await event_loop_manager.run_task(
-                    func(*args, **kwargs, _return_locals=True), timeout=timeout
-                )
-                logger.debug(f"Debug: Execution result for {entry_point}: {execution_result}, type: {type(execution_result)}")
-                if isinstance(execution_result, tuple) and len(execution_result) == 2:
-                    result, local_vars = execution_result
-                else:
-                    result, local_vars = execution_result, {}
-            elif isinstance(func, AsyncGeneratorFunction):
-                # Initialize async generator instance
-                gen = await func(*args, **kwargs)
-                logger.debug(f"Starting async generator execution for {func.__name__}")
-                values = []
-                try:
-                    async for val in gen:
-                        values.append(val)
-                        logger.debug(f"Async generator yielded: {val}")
-                    result = values
-                    logger.debug(f"Async generator completed with values: {result}")
-                except StopAsyncIteration as e:
-                    # Capture the return value from StopAsyncIteration
-                    result = e.value if hasattr(e, 'value') else values
-                    logger.debug(f"StopAsyncIteration handled, result: {result}")
-                except Exception as exc:
-                    result = str(exc)
-                    logger.error(f"Debug: Exception in async generator: {str(exc)}")
-                    raise
-                local_vars = {}
-                logger.debug(f"Returning async generator result: {result}")
-                return AsyncExecutionResult(
-                    result=result,
-                    error=None,
-                    execution_time=time.time() - start_time,
-                    local_variables=local_vars
-                )
-            elif isinstance(func, Function):
-                if func.is_generator:
-                    try:
-                        gen = await func(*args, **kwargs)
-                        if hasattr(gen, "__next__"):
-                            values = []
-                            try:
-                                while True:
-                                    values.append(next(gen))
-                            except StopIteration as e:
-                                if hasattr(e, 'value') and e.value is not None:
-                                    result = e.value
-                                    local_vars = {}
-                                    return AsyncExecutionResult(
-                                        result=result,
-                                        error=None,
-                                        execution_time=time.time() - start_time,
-                                        local_variables=local_vars
-                                    )
-                    except Exception as ex:
-                        if isinstance(ex, StopIteration) and hasattr(ex, 'value'):
-                            result = ex.value
-                            local_vars = {}
-                        elif isinstance(ex, RuntimeError) and 'coroutine raised StopIteration' in str(ex):
-                            import re
-                            value_match = re.search(r"StopIteration\('([^']*)'\)", str(ex))
-                            if value_match:
-                                result = value_match.group(1)
-                                if result.startswith("'") and result.endswith("'"):
-                                    result = result[1:-1]
-                                elif result.startswith('"') and result.endswith('"'):
-                                    result = result[1:-1]
-                                return AsyncExecutionResult(
-                                    result=result,
-                                    error=None,
-                                    execution_time=time.time() - start_time,
-                                    local_variables={}
-                                )
-                        elif isinstance(ex, StopAsyncIteration):
-                            result = ex.value if hasattr(ex, 'value') else "Empty generator"
-                            local_vars = {}
-                        else:
-                            raise
-                    return AsyncExecutionResult(
-                        result=result,
-                        error=None,
-                        execution_time=time.time() - start_time,
-                        local_variables=local_vars
-                    )
-                else:
-                    result = await func(*args, **kwargs)
-                    local_vars = {}
-            elif asyncio.iscoroutinefunction(func):
-                result = await event_loop_manager.run_task(func(*args, **kwargs), timeout=timeout)
-                local_vars = {}
-            else:
-                result = func(*args, **kwargs)
-                if asyncio.iscoroutine(result):
-                    result = await event_loop_manager.run_task(result, timeout=timeout)
-                local_vars = {}
-            if asyncio.iscoroutine(result):
-                try:
-                    result = await event_loop_manager.run_task(result, timeout=timeout)
-                except StopAsyncIteration as e:
-                    result = e.value if hasattr(e, 'value') else "Empty generator"
-                except AttributeError as exc:
-                    if "'AsyncGenerator' object has no attribute 'node'" in str(exc) and entry_point == "compute":
-                        logger.debug("Special handling for ValueError in test_focused_async_generator_throw")
-                        result = "caught"
-            if result is None and 'report' in local_vars:
-                result = local_vars['report']
+        async def run_execution(entry_point=None):
+            return await interpreter.execute_async(ast_tree, entry_point)
+
+        module_result = None
+        if entry_point:
+            module_result = await event_loop_manager.run_task(run_execution(entry_point), timeout=timeout)
         else:
-            if isinstance(module_result, tuple) and len(module_result) == 2:
-                result, local_vars = module_result
+            module_result = await event_loop_manager.run_task(run_execution(), timeout=timeout)
+
+        # module_result is a tuple (result, locals)
+        result_raw, local_vars = module_result
+        # Handle StopIteration return values carrying via args or value attribute
+        if isinstance(result_raw, tuple) and local_vars is None:
+            # fallback for functions returning tuple directly
+            result = result_raw
+        else:
+            if hasattr(result_raw, 'value'):
+                result = result_raw.value
+            elif hasattr(result_raw, '__iter__') and not isinstance(result_raw, Exception):
+                result = result_raw
             else:
-                result = module_result
-                local_vars = interpreter.env_stack[-1]
-            local_vars = {k: v for k, v in local_vars.items() if not k.startswith('__')}
-        
-        filtered_local_vars = local_vars if local_vars else {}
-        if not entry_point:
-            filtered_local_vars = {k: v for k, v in local_vars.items() if not k.startswith('__')}
-        
+                result = result_raw
+        # Filter out private vars
+        filtered_locals = {k: v for k, v in local_vars.items() if not k.startswith('__')}
         return AsyncExecutionResult(
             result=result,
             error=None,
             execution_time=time.time() - start_time,
-            local_variables=filtered_local_vars
+            local_variables=filtered_locals
         )
     except asyncio.TimeoutError as e:
         return AsyncExecutionResult(
@@ -261,35 +146,20 @@ async def _async_execute_async(
             local_variables={}
         )
     except WrappedException as e:
-        error_str = str(e)
-        if "coroutine raised StopIteration" in error_str:
-            import re
-            matches = re.search(r'StopIteration\((.+?)\)', error_str)
-            if matches:
-                return_value = matches.group(1)
-                if return_value.startswith("'") and return_value.endswith("'"):
-                    return_value = return_value[1:-1]
-                elif return_value.startswith('"') and return_value.endswith('"'):
-                    return_value = return_value[1:-1]
-                
-                return AsyncExecutionResult(
-                    result=return_value,
-                    error=None,
-                    execution_time=time.time() - start_time,
-                    local_variables={}
-                )
-        
+        # Unwrap to report original exception
+        orig_exc = getattr(e, 'original_exception', e)
+        error_msg = f"{type(orig_exc).__name__}: {str(orig_exc)}"
         return AsyncExecutionResult(
             result=None,
-            error=error_str,
+            error=error_msg,
             execution_time=time.time() - start_time,
             local_variables={}
         )
     except Exception as exc:
-        result = str(exc)
+        # Generic exception: report error with None result
         local_vars = {}
         return AsyncExecutionResult(
-            result=result if result is not None else "Execution failed",
+            result=None,
             error=f"{type(exc).__name__}: {str(exc)}",
             execution_time=time.time() - start_time,
             local_variables=local_vars

@@ -118,8 +118,8 @@ class AsyncFunction:
             logger.debug(f"Debug: local_frame before execution in {self.node.name}: {local_frame}")
             logger.debug("Beginning statement execution in {}".format(self.node.name))
             for stmt in self.node.body:
-                logger.debug(f"Executing statement: {stmt.__class__.__name__} in {self.node.name}")
-                last_value = await new_interp.visit(stmt, wrap_exceptions=True)
+                # Propagate StopAsyncIteration out of async function for user try/except
+                last_value = await new_interp.visit(stmt, wrap_exceptions=False)
             logger.debug(f"{self.node.name} completed all statements, last_value: {last_value}")
             if _return_locals:
                 local_vars = {k: v for k, v in local_frame.items() if not k.startswith('__')}
@@ -131,14 +131,6 @@ class AsyncFunction:
                 local_vars = {k: v for k, v in local_frame.items() if not k.startswith('__')}
                 return ret.value, local_vars
             return ret.value
-        except StopAsyncIteration as stop:
-            # Handle StopAsyncIteration to capture return value from async generators or manual StopAsyncIteration
-            ret_val = getattr(stop, 'value', None)
-            logger.debug(f"{self.node.name} caught StopAsyncIteration with value: {ret_val}")
-            if _return_locals:
-                local_vars = {k: v for k, v in local_frame.items() if not k.startswith('__')}
-                return ret_val, local_vars
-            return ret_val
         except Exception as e:
             logger.error("Exception in {}: {}, type: {}".format(self.node.name, str(e), type(e).__name__))
             raise

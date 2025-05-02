@@ -221,9 +221,11 @@ async def visit_Call(interpreter, node: ast.Call, is_await_context: bool = False
             try:
                 return gen.__next__()
             except StopIteration as e:
-                if hasattr(e, 'value') and e.value is not None:
-                    return e.value
-                return default
+                if default is not None:
+                    return default
+                else:
+                    # Re-raise StopIteration to let user catch and read e.value
+                    raise
         return next(gen, default)
 
     if isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Call) and isinstance(node.func.value.func, ast.Name) and node.func.value.func.id == 'super':
