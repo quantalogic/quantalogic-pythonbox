@@ -130,11 +130,10 @@ class AsyncGeneratorFunction:
                                     yield result
                     except ReturnException as re:
                         if re.value is not None:
-                            self.logger.debug(f"Raising StopAsyncIterationWithValue from ReturnException with value: {re.value}")
-                            raise StopAsyncIterationWithValue(re.value)
-                        else:
-                            self.logger.debug("Raising StopAsyncIteration from ReturnException without value")
-                            raise StopAsyncIteration()
+                            self.logger.debug(f"Yielding nested generator return from ReturnException: {re.value}")
+                            yield re.value
+                        # End generator after yielding nested return
+                        return
                     except GeneratorExit:
                         for fstmt in stmt.finalbody:
                             if isinstance(fstmt, ast.Expr) and isinstance(fstmt.value, ast.Yield):
