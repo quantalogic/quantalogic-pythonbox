@@ -1,4 +1,5 @@
 import ast
+import inspect
 from typing import Any
 
 from .interpreter_core import ASTInterpreter
@@ -46,7 +47,10 @@ async def visit_BinOp(self: ASTInterpreter, node: ast.BinOp, wrap_exceptions: bo
             return left & right
         return left & right
     elif isinstance(op, ast.MatMult):  # Added support for matrix multiplication
-        return left @ right
+        result = left @ right
+        if inspect.isawaitable(result):
+            return await result
+        return result
     else:
         raise Exception("Unsupported binary operator: " + str(op))
 
