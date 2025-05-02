@@ -26,13 +26,7 @@ def isasyncgen(obj):
     return isinstance(obj, AsyncGenerator) or _orig_isasyncgen(obj)
 _inspect_module.isasyncgen = isasyncgen
 
-from .exceptions import ReturnException
-
-class StopAsyncIterationWithValue(StopAsyncIteration):
-    """Custom StopAsyncIteration carrying return value via .value."""
-    def __init__(self, value):
-        super().__init__()
-        self.value = value  # Directly set value as an attribute
+from .exceptions import ReturnException, StopAsyncIterationWithValue
 
 class AsyncGeneratorFunction:
     def __init__(self, node: ast.AsyncFunctionDef, closure: List[Dict[str, Any]], interpreter,  # Local import of ASTInterpreter inside methods to avoid circular import
