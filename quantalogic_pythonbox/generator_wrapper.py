@@ -24,9 +24,14 @@ class GeneratorWrapper:
     def __next__(self):
         logging.debug(f"Debug: Calling next on self.gen, type: {type(self.gen).__name__}")
         if self.closed:
-            e = StopIteration()
-            e.value = self.return_value
-            raise e
+            # If we've already closed the generator and have a return value, return it
+            if self.return_value is not None:
+                self.return_value = None  # Only return the value once
+                e = StopIteration()
+                e.value = self.return_value
+                raise e
+            else:
+                raise StopIteration()
         try:
             value = next(self.gen)
             self.yielded_values.append(value)
@@ -39,12 +44,19 @@ class GeneratorWrapper:
             logging.debug(f"Debug: Caught StopIteration in __next__ with value: {orig_val}")
             self.closed = True
             self.return_value = orig_val
-            e = StopIteration()
-            e.value = self.return_value
-            raise e
+            # Rather than raising StopIteration immediately, just inform caller that we've reached the end
+            e_new = StopIteration()
+            if orig_val:
+                e_new.value = orig_val
+            raise e_new
         except Exception as e:
             logging.error(f"Debug: Exception in __next__: {type(e).__name__}, message: {str(e)}")
             raise
+
+    def __repr__(self):
+        # Customize the representation to show the return value for debugging
+        status = "closed" if self.closed else "active" 
+        return f"<GeneratorWrapper status={status} return_value={self.return_value}>"
 
     def send(self, value):
         if self.closed:

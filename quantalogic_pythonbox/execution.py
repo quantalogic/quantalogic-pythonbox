@@ -120,9 +120,28 @@ async def _async_execute_async(
 
         # module_result is a tuple (result, locals)
         result_raw, local_vars = module_result
-        # Handle GeneratorWrapper for synchronous generators: consume yields into a list
+        # Handle GeneratorWrapper for synchronous generators
         if isinstance(result_raw, GeneratorWrapper):
-            result = list(result_raw)
+            # First check if the generator is already exhausted and has a return value
+            if hasattr(result_raw, 'return_value') and result_raw.closed and result_raw.return_value is not None:
+                result = result_raw.return_value
+            else:
+                # Try to collect all yields, but if we get a StopIteration with a value, use that
+                try:
+                    # Collect all yields into a list
+                    values = list(result_raw)
+                    
+                    # After exhausting the generator, check for return value
+                    if hasattr(result_raw, 'return_value') and result_raw.return_value is not None:
+                        result = result_raw.return_value
+                    else:
+                        result = values
+                except StopIteration as e:
+                    # If StopIteration has a value, use that (generator return value)
+                    if hasattr(e, 'value') and e.value is not None:
+                        result = e.value
+                    else:
+                        result = []
         # Handle StopIteration return values carrying via args or value attribute
         elif isinstance(result_raw, tuple) and local_vars is None:
             # fallback for functions returning tuple directly
