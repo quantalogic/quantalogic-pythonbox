@@ -184,67 +184,6 @@ async def visit_Call(interpreter, node: ast.Call, is_await_context: bool = False
         new_pairs.sort(key=lambda pair: pair[0], reverse=reverse)
         return [elem for _, elem in new_pairs][:n]
 
-    if func is str:
-        if len(evaluated_args) != 1:
-            raise TypeError("str() takes exactly one argument ({} given)".format(len(evaluated_args)))
-        arg = evaluated_args[0]
-        return "{}".format(arg)
-
-    if func is str and len(evaluated_args) == 1 and isinstance(evaluated_args[0], BaseException):
-        exc = evaluated_args[0]
-        return "{}".format(exc.args[0] if exc.args else str(exc))
-
-    if func is super:
-        if len(evaluated_args) == 0:
-            if not (interpreter.current_class and interpreter.current_instance):
-                for frame in reversed(interpreter.env_stack):
-                    if 'self' in frame and '__current_method__' in frame:
-                        interpreter.current_instance = frame['self']
-                        interpreter.current_class = frame['self'].__class__
-                        break
-                if not (interpreter.current_class and interpreter.current_instance):
-                    raise TypeError("super() without arguments requires a class instantiation context")
-            result = super(interpreter.current_class, interpreter.current_instance)
-        elif len(evaluated_args) >= 2:
-            cls, obj = evaluated_args[0], evaluated_args[1]
-            result = super(cls, obj)
-        else:
-            raise TypeError("super() requires class and instance arguments")
-        return result
-
-    # Special handling for next() on GeneratorWrapper to propagate StopIteration correctly
-    if func is next and len(evaluated_args) >= 1:
-        gen = evaluated_args[0]
-        default = evaluated_args[1] if len(evaluated_args) > 1 else None
-        from .generator_wrapper import GeneratorWrapper
-        if isinstance(gen, GeneratorWrapper):
-            try:
-                return gen.__next__()
-            except StopIteration as e:
-                if default is not None:
-                    return default
-                else:
-                    # Re-raise StopIteration to let user catch and read e.value
-                    raise
-        return next(gen, default)
-
-    if isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Call) and isinstance(node.func.value.func, ast.Name) and node.func.value.func.id == 'super':
-        super_call = await interpreter.visit(node.func.value, wrap_exceptions=wrap_exceptions)
-        method = getattr(super_call, node.func.attr)
-        return await execute_function(method, evaluated_args, kwargs)
-
-    if func is list and len(evaluated_args) == 1 and hasattr(evaluated_args[0], '__aiter__'):
-        return [val async for val in evaluated_args[0]]
-
-    if func is sorted:
-        interpreter.env_stack[0]['logger'].debug("Debug: Calling async_sorted with iterable type: {}, key: {}, key type: {}".format(type(evaluated_args[0]) if evaluated_args else 'No iterable', kwargs.get('key', 'None'), type(kwargs.get('key', None)) if 'key' in kwargs else 'No key'))
-        if 'key' in kwargs and callable(kwargs['key']):
-            from .async_builtins import async_sorted
-            result = await async_sorted(evaluated_args[0] if evaluated_args else [], 
-                                     key=kwargs.get('key'), 
-                                     reverse=kwargs.get('reverse', False))
-            return result
-    
     if isinstance(node.func, ast.Attribute) and node.func.attr == "sort" and hasattr(func, "__self__") and isinstance(func.__self__, list):
         lst = func.__self__
         keyfunc = kwargs.pop("key", None)
@@ -261,7 +200,17 @@ async def visit_Call(interpreter, node: ast.Call, is_await_context: bool = False
         lst[:] = [item for _, item in new_pairs]
         return None
 
-    if func in (range, list, dict, set, tuple, frozenset, sorted):
+    if func is sorted:
+        # Always use async_sorted to handle possible async key functions
+        from .async_builtins import async_sorted
+        result = await async_sorted(
+            evaluated_args[0] if evaluated_args else [],
+            key=kwargs.get('key'),
+            reverse=kwargs.get('reverse', False)
+        )
+        return result
+
+    if func in (range, list, dict, set, tuple, frozenset):
         return func(*evaluated_args, **kwargs)
 
     if inspect.isclass(func):
