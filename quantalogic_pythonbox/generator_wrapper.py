@@ -32,9 +32,13 @@ class GeneratorWrapper:
             self.yielded_values.append(value)
             return value
         except StopIteration as e:
-            logging.debug(f"Debug: Caught StopIteration in __next__ with value: {e.args[0] if e.args else 'No value'}")
+            # Extract original StopIteration value, falling back to args if needed
+            orig_val = getattr(e, 'value', None)
+            if orig_val is None and e.args:
+                orig_val = e.args[0]
+            logging.debug(f"Debug: Caught StopIteration in __next__ with value: {orig_val}")
             self.closed = True
-            self.return_value = e.args[0] if e.args else None
+            self.return_value = orig_val
             e = StopIteration()
             e.value = self.return_value
             raise e
@@ -60,9 +64,13 @@ class GeneratorWrapper:
             e.value = self.return_value
             raise e
         except StopIteration as e:
-            logging.debug(f"Debug: Caught StopIteration in send with value: {e.args[0] if e.args else 'No value'}")
+            # Extract original StopIteration value, falling back to args if needed
+            orig_val = getattr(e, 'value', None)
+            if orig_val is None and e.args:
+                orig_val = e.args[0]
+            logging.debug(f"Debug: Caught StopIteration in send with value: {orig_val}")
             self.closed = True
-            self.return_value = e.args[0] if e.args else None
+            self.return_value = orig_val
             e = StopIteration()
             e.value = self.return_value
             raise e
@@ -93,9 +101,13 @@ class GeneratorWrapper:
             e.value = self.return_value
             raise e
         except StopIteration as e:
-            logging.debug(f"Debug: Caught StopIteration in throw with value: {e.args[0] if e.args else 'No value'}")
+            # Extract original StopIteration value, falling back to args if needed
+            orig_val = getattr(e, 'value', None)
+            if orig_val is None and e.args:
+                orig_val = e.args[0]
+            logging.debug(f"Debug: Caught StopIteration in throw with value: {orig_val}")
             self.closed = True
-            self.return_value = e.args[0] if e.args else None
+            self.return_value = orig_val
             e = StopIteration()
             e.value = self.return_value
             raise e

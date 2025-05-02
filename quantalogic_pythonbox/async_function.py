@@ -131,6 +131,22 @@ class AsyncFunction:
                 local_vars = {k: v for k, v in local_frame.items() if not k.startswith('__')}
                 return ret.value, local_vars
             return ret.value
+        except RuntimeError as e:
+            # Handle StopIteration raised from coroutine per PEP 479
+            if str(e) == "coroutine raised StopIteration":
+                orig = e.__cause__ if hasattr(e, '__cause__') else None
+                ret_val = getattr(orig, 'value', None)
+                logger.debug(f"{self.node.name} caught coroutine StopIteration with value: {ret_val}")
+                return ret_val
+            raise
+        except StopIteration as stop:
+            # Treat StopIteration as a return from async function
+            logger.debug(f"{self.node.name} caught StopIteration with value: {getattr(stop, 'value', None)}")
+            ret_val = getattr(stop, 'value', None)
+            if _return_locals:
+                local_vars = {k: v for k, v in local_frame.items() if not k.startswith('__')}
+                return ret_val, local_vars
+            return ret_val
         except Exception as e:
             logger.error("Exception in {}: {}, type: {}".format(self.node.name, str(e), type(e).__name__))
             raise

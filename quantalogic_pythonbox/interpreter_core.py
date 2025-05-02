@@ -427,8 +427,10 @@ class ASTInterpreter:
         except RuntimeError as e:
             self.env_stack[0]["logger"].debug(f"Caught RuntimeError: {str(e)}, is_await_context: {is_await_context}")
             self.recursion_depth -= 1
-            if is_await_context and str(e) == "coroutine raised StopIteration":
-                value = getattr(e, 'value', None) or 'done'
+            if str(e) == "coroutine raised StopIteration":
+                # Extract original StopIteration value from exception cause
+                orig = e.__cause__ if hasattr(e, '__cause__') else None
+                value = getattr(orig, 'value', None) if orig is not None else None
                 self.env_stack[0]["logger"].debug(f"Reconstructing StopIteration with value: {value}")
                 raise StopIteration(value)
             if not wrap_exceptions:

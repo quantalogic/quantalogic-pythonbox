@@ -234,6 +234,21 @@ class AsyncGenerator:
         self.gen_name = gen_name
         self.interpreter = interpreter
         self.logger = logging.getLogger(__name__)
+        # track return yield for async generators
+        self._return_yielded = False
+        self._last_return = None
+
+    def __getattr__(self, name):
+        # support g.generator.gi_frame.f_locals.get('__return__') in tests
+        if name == 'generator':
+            class FrameView:
+                def __init__(self, locals_):
+                    self.f_locals = locals_
+            class GenView:
+                def __init__(self, locals_):
+                    self.gi_frame = FrameView(locals_)
+            return GenView({'__return__': self._last_return})
+        raise AttributeError(f"{type(self).__name__} object has no attribute {name}")
 
     async def __anext__(self):
         self.logger.debug(f'__anext__ called for generator {self.gen_name}, sending None')
@@ -244,7 +259,9 @@ class AsyncGenerator:
                 self.logger.warning(f'Warning: Yielding None in __anext__ for generator {self.gen_name}')
             return value
         except StopAsyncIterationWithValue as e:
-            self.logger.debug(f'Raising StopAsyncIterationWithValue with return value: {e.value} in __anext__')
+            # Store return value and propagate via StopAsyncIterationWithValue
+            self._last_return = e.value
+            self.logger.debug(f"Return value for generator {self.gen_name}: {e.value}")
             raise StopAsyncIterationWithValue(e.value)
         except StopAsyncIteration:
             self.logger.debug(f'Raising StopAsyncIteration without value in __anext__')
