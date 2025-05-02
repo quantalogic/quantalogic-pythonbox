@@ -14,6 +14,8 @@ async def visit_With(interpreter, node: ast.With, wrap_exceptions: bool = True) 
             var = await ctx.__aenter__()
         else:
             var = ctx.__enter__()
+            if asyncio.iscoroutine(var):
+                var = await var
         if item.optional_vars:
             await interpreter.assign(item.optional_vars, var)
     try:
@@ -24,14 +26,18 @@ async def visit_With(interpreter, node: ast.With, wrap_exceptions: bool = True) 
             if asyncio.iscoroutinefunction(getattr(ctx, '__aexit__', None)):
                 await ctx.__aexit__(type(e), e, e.__traceback__)
             else:
-                ctx.__exit__(type(e), e, e.__traceback__)
+                res = ctx.__exit__(type(e), e, e.__traceback__)
+                if asyncio.iscoroutine(res):
+                    await res
         raise
     else:
         for ctx in reversed(contexts):
             if asyncio.iscoroutinefunction(getattr(ctx, '__aexit__', None)):
                 await ctx.__aexit__(None, None, None)
             else:
-                ctx.__exit__(None, None, None)
+                res = ctx.__exit__(None, None, None)
+                if asyncio.iscoroutine(res):
+                    await res
     return result
 
 
