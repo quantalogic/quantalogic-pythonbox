@@ -262,11 +262,15 @@ class AsyncGenerator:
                 self.logger.warning(f'Warning: Yielding None in __anext__ for generator {self.gen_name}')
             return value
         except StopAsyncIterationWithValue as e:
-            # Store return value and propagate via StopAsyncIterationWithValue
+            # Store return value and propagate via StopAsyncIteration
             self._last_return = e.value
             self.agenerator._update_return(e.value)  # Update the return value in the mock generator
             self.logger.debug(f"Return value for generator {self.gen_name}: {e.value}")
-            raise StopAsyncIteration(e.value)
+            # Instead of raising a plain StopAsyncIteration, create one with a value attribute
+            exc = StopAsyncIteration()
+            exc.value = e.value  # Add the value attribute to match Python's behavior
+            self.logger.debug(f"Raising StopAsyncIteration with value attribute: {e.value}")
+            raise exc
         except StopAsyncIteration:
             self.logger.debug(f'Raising StopAsyncIteration without value in __anext__')
             raise
@@ -276,7 +280,10 @@ class AsyncGenerator:
                 self.logger.debug(f'Unwrapped StopAsyncIterationWithValue with return value: {ctx.value} in __anext__')
                 self._last_return = ctx.value
                 self.agenerator._update_return(ctx.value)  # Update the return value in the mock generator
-                raise StopAsyncIteration()
+                # Create StopAsyncIteration with value attribute
+                exc = StopAsyncIteration()
+                exc.value = ctx.value
+                raise exc
             elif isinstance(ctx, StopAsyncIteration):
                 self.logger.debug(f'Unwrapped StopAsyncIteration without value in __anext__')
                 raise StopAsyncIteration()
