@@ -95,9 +95,7 @@ class AsyncGeneratorFunction:
                                 yield_val = await self.interpreter.visit(inner.value.value, wrap_exceptions=False)
                                 yield yield_val
                             else:
-                                result = await self.interpreter.visit(inner, wrap_exceptions=False)
-                                if result is not None:
-                                    yield result
+                                await self.interpreter.visit(inner, wrap_exceptions=False)
                     continue
                 if isinstance(stmt, ast.Assign) and isinstance(stmt.value, ast.Yield):
                     yield_val = await self.interpreter.visit(stmt.value.value, wrap_exceptions=False)
