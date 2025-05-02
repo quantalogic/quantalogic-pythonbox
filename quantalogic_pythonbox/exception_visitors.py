@@ -20,7 +20,9 @@ async def visit_Try(interpreter, node: ast.Try, wrap_exceptions: bool = True) ->
         # Unwrap the exception
         original_e = e
         while isinstance(original_e, WrappedException):
-            original_e = original_e.original_exception
+            original_e = getattr(original_e, 'original_exception', original_e)
+            if original_e is getattr(original_e, 'original_exception', None):
+                break
         interpreter.env_stack[0]['logger'].debug(f"Unwrapped exception: {type(original_e).__name__}")
         exception_raised = original_e
         # Track current exception to support bare raise
