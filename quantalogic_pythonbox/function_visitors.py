@@ -169,6 +169,17 @@ async def visit_Call(interpreter, node: ast.Call, is_await_context: bool = False
                 return evaluated_args[1]  # Return default if provided
             else:
                 raise stop_async_e
+        except RuntimeError as gen_err:
+            # Handle PEP-479: generator raised StopIteration => convert back to StopIteration with original value
+            interpreter.env_stack[0]['logger'].debug(f"Debug: Caught RuntimeError in 'next' call: {str(gen_err)}. Checking for StopIteration cause.")
+            cause = gen_err.__cause__ if hasattr(gen_err, '__cause__') else None
+            if cause and isinstance(cause, StopIteration):
+                orig_val = getattr(cause, 'value', None)
+                if orig_val is None and cause.args:
+                    orig_val = cause.args[0]
+                raise StopIteration(orig_val)
+            # Not a PEP-479 StopIteration, re-raise
+            raise
         except AttributeError:
             raise TypeError("'{}' object is not an iterator".format(type(iterator).__name__))
     # Handle type() calls explicitly

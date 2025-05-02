@@ -153,8 +153,8 @@ async def _async_execute_async(
                     else:
                         result = []
         # Handle StopIteration return values carrying via args or value attribute
-        elif isinstance(result_raw, tuple) and local_vars is None:
-            # fallback for functions returning tuple directly
+        elif isinstance(result_raw, tuple):
+            # direct tuple return from user code
             result = result_raw
         else:
             if hasattr(result_raw, 'value'):
@@ -194,6 +194,18 @@ async def _async_execute_async(
             execution_time=time.time() - start_time,
             local_variables={}
         )
+    except RuntimeError as e:
+        # Handle StopIteration raised inside coroutine (PEP-479) as generator return
+        if str(e) == "coroutine raised StopIteration":
+            orig = e.__cause__ if hasattr(e, '__cause__') else None
+            val = getattr(orig, 'value', None) if orig else None
+            return AsyncExecutionResult(
+                result=val,
+                error=None,
+                execution_time=time.time() - start_time,
+                local_variables={}
+            )
+        raise
     except Exception as exc:
         # Generic exception: report error with None result, unwrap original cause
         local_vars = {}

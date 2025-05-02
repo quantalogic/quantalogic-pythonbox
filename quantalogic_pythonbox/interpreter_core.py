@@ -430,7 +430,13 @@ class ASTInterpreter:
             if str(e) == "coroutine raised StopIteration":
                 # Extract original StopIteration value from exception cause
                 orig = e.__cause__ if hasattr(e, '__cause__') else None
-                value = getattr(orig, 'value', None) if orig is not None else None
+                # Prefer .value attribute, fallback to args[0]
+                if orig is not None:
+                    value = getattr(orig, 'value', None)
+                    if value is None and getattr(orig, 'args', None):
+                        value = orig.args[0]
+                else:
+                    value = None
                 self.env_stack[0]["logger"].debug(f"Reconstructing StopIteration with value: {value}")
                 raise StopIteration(value)
             if not wrap_exceptions:
