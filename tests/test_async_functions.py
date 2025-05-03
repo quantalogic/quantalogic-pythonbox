@@ -184,7 +184,7 @@ await main()
         assert result.error is None
 
     async def test_async_sort_error_and_solution(self):
-        """Verify proper error handling and solution for async sorting"""
+        """Verify proper async sorting with async key functions"""
         error_result = await execute_async('''
 import asyncio
 
@@ -198,16 +198,10 @@ class HNItem:
         return self.score
 
 items = [HNItem("Item A", 300), HNItem("Item B", 200), HNItem("Item C", 400)]
-
-try:
-    sorted(items, key=lambda x: x.get_score(), reverse=True)
-except TypeError as e:
-    error = str(e)
-
-error
+sorted_items = sorted(items, key=lambda x: x.get_score(), reverse=True)
+[item.title for item in sorted_items]
 ''', allowed_modules=['asyncio'])
-        
-        assert "'<' not supported between instances of 'coroutine' and 'coroutine'" in error_result.result
+        assert error_result.result == ["Item C", "Item A", "Item B"]
         
         solution_result = await execute_async('''
 import asyncio
@@ -229,3 +223,55 @@ sorted_items = [pair[1] for pair in sorted_pairs]
 ''', allowed_modules=['asyncio'])
         
         assert solution_result.result == ["Item C", "Item A", "Item B"]
+
+    async def test_hn_items_pipeline(self):
+        """Verify Hacker News items pipeline and table formatting"""
+        code = r'''
+import heapq
+
+class FakeItem:
+    def __init__(self, title, score, by):
+        self.title = title
+        self.score = score
+        self.by = by
+
+class quantalogic_hacker_news:
+    @staticmethod
+    async def get_hn_items(item_type, per_page, page):
+        items = []
+        for i in range(1, per_page + 1):
+            items.append(FakeItem(f"Title{page}_{i}", page * 100 + i, f"Author{page}_{i}"))
+        return items
+
+async def main():
+    step1_items = []
+    for page in range(1, 3):
+        step1_response = await quantalogic_hacker_news.get_hn_items(item_type='top', per_page=2, page=page)
+        if step1_response:
+            step1_items.extend(step1_response)
+        else:
+            return {
+                'status': 'inprogress',
+                'result': 'Failed to retrieve Hacker News items.',
+                'next_step': 'Retry fetching Hacker News items.'
+            }
+    step2_sorted_items = heapq.nlargest(4, step1_items, key=lambda item: item.score)
+
+    step3_table_header = "| Title | Score | Author |\n|---|---|---|"
+    step3_table_rows = []
+    for item in step2_sorted_items:
+        step3_table_rows.append(f"| {item.title} | {item.score} | {item.by} |")
+    step4_table = step3_table_header + "\n" + "\n".join(step3_table_rows)
+
+    return {
+        'status': 'completed',
+        'result': step4_table,
+    }
+'''
+        result = await execute_async(code, entry_point='main', allowed_modules=['heapq'])
+        assert result.error is None
+        assert result.result['status'] == 'completed'
+        table = result.result['result']
+        assert table.startswith("| Title | Score | Author |")
+        assert "| Title1_1 | 101 | Author1_1 |" in table
+        assert "| Title2_2 | 202 | Author2_2 |" in table

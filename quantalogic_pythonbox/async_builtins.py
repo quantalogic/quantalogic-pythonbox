@@ -23,7 +23,17 @@ async def async_sorted(iterable: Iterable[T], *, key: Optional[Callable[[T], Any
     Returns:
         A sorted list of the items from iterable
     """
-    items = list(iterable)
+    # Handle None iterable
+    if iterable is None:
+        return []
+
+    # Collect items from async or sync iterable
+    items = []
+    if hasattr(iterable, '__aiter__'):
+        async for item in iterable:
+            items.append(item)
+    else:
+        items = list(iterable)
     
     if key is not None:
         # Get all the keys (awaiting any coroutines that are returned)
