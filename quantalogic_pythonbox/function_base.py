@@ -114,7 +114,8 @@ class Function:
                 
                 values = []
                 return_value = None
-                
+                exception_to_raise = None
+
                 try:
                     for stmt in self.node.body:
                         if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Yield):
@@ -124,8 +125,11 @@ class Function:
                             
                         if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.YieldFrom):
                             iterable = await new_interp.visit(stmt.value.value, wrap_exceptions=False)
-                            for val in iterable:
-                                values.append(val)
+                            try:
+                                for val in iterable:
+                                    values.append(val)
+                            except Exception as e:
+                                exception_to_raise = e
                             continue
                             
                         if isinstance(stmt, ast.Return):
@@ -152,11 +156,16 @@ class Function:
                     return_value = getattr(e, 'value', e.args[0] if e.args else None)
                 except ReturnException as ret:
                     return_value = ret.value
+                # Other exceptions from sub-generators captured to defer raising
+                except Exception as e:
+                    exception_to_raise = e
                 
-                # Create a generator that includes the return value
+                # Create a generator that includes the return values and deferred exception
                 def gen_with_return():
                     for val in values:
                         yield val
+                    if exception_to_raise:
+                        raise exception_to_raise
                     return return_value
                     
                 return GeneratorWrapper(gen_with_return())
