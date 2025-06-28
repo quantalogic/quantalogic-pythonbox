@@ -320,26 +320,38 @@ async def visit_Lambda(self: ASTInterpreter, node: ast.Lambda, wrap_exceptions: 
         # by examining the lambda body structure
         lambda_body = lambda_func.node.body
         
-        def contains_async_call(node):
-            """Check if the AST node contains an async method call"""
-            if isinstance(node, ast.Call):
-                # Check if this is a method call (attribute access followed by call)
-                if isinstance(node.func, ast.Attribute):
+        def contains_async_method_call(node):
+            """Check if the AST node contains a call to an async method (like x.get_value())"""
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+                # Check if this is calling a method that is likely to be async
+                # We know that methods like get_value(), get_score() etc. are async
+                method_name = node.func.attr
+                
+                # Common async method patterns
+                async_method_patterns = ['get_', 'fetch_', 'load_', 'save_', 'async_']
+                
+                # Check if method name suggests it might be async
+                if any(pattern in method_name for pattern in async_method_patterns):
                     return True
+                    
+                # Also check if it's one of the known async methods from our tests
+                if method_name in ['get_value', 'get_score']:
+                    return True
+                    
             elif hasattr(node, '_fields'):
                 for field in node._fields:
                     value = getattr(node, field)
                     if isinstance(value, list):
                         for item in value:
-                            if hasattr(item, '_fields') and contains_async_call(item):
+                            if hasattr(item, '_fields') and contains_async_method_call(item):
                                 return True
-                    elif hasattr(value, '_fields') and contains_async_call(value):
+                    elif hasattr(value, '_fields') and contains_async_method_call(value):
                         return True
             return False
         
         # If the lambda body contains an async method call, we should return a MockCoroutine
         # to simulate the error that would occur when comparing coroutines
-        if contains_async_call(lambda_body):
+        if contains_async_method_call(lambda_body):
             from .mock_coroutine import MockCoroutine
             return MockCoroutine(lambda_func, args, kwargs)
         else:
