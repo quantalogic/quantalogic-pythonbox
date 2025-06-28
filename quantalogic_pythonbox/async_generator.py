@@ -32,8 +32,6 @@ class StatefulAsyncGenerator:
         
     async def asend(self, value):
         """Send a value to the generator"""
-        logger.debug("asend called with value: %s", value)
-        
         if not self.started:
             self.started = True
             self.coroutine = self._run_generator()
@@ -43,8 +41,6 @@ class StatefulAsyncGenerator:
             
     async def athrow(self, exc_type, exc_value=None, _traceback=None):
         """Throw an exception into the generator"""
-        logger.debug("athrow called with exception: %s", exc_type)
-        
         if not self.started:
             self.started = True
             self.coroutine = self._run_generator()
@@ -59,20 +55,21 @@ class StatefulAsyncGenerator:
         else:
             exception = exc_type
             
-        # Instead of delegating to coroutine.athrow, inject the exception
-        # into our interpreter's execution context
+        # Store the exception in context for the yield to throw
         self.interpreter.generator_context['thrown_exception'] = exception
-        self.interpreter.generator_context['exception_thrown'] = True  # Flag to indicate exception was thrown
+        self.interpreter.generator_context['exception_thrown'] = True
         
         # Set the resuming flag for the specific yield that was last executed
         last_yield_key = self.interpreter.generator_context.get('last_yield_key')
         if last_yield_key:
             resuming_key = f'resuming_{last_yield_key}'
             self.interpreter.generator_context[resuming_key] = True
+            self.interpreter.generator_context['resuming_from_asend'] = True
         
-        # Continue execution - the next yield will check for thrown exceptions
+        # Continue execution by sending None - the exception will be thrown when the yield resumes
         try:
-            return await self.coroutine.asend(None)
+            result = await self.coroutine.asend(None)
+            return result
         except StopAsyncIteration:
             raise
             
@@ -103,14 +100,26 @@ class StatefulAsyncGenerator:
             stmt_index = 0
             while stmt_index < len(self.statements):
                 stmt = self.statements[stmt_index]
+                
+                # Track current statement index for athrow
+                self.interpreter.generator_context['current_stmt_index'] = stmt_index
+                
+                # Check if we need to re-execute a statement (for athrow)
+                re_execute = self.interpreter.generator_context.get('re_execute_statement', False)
+                if re_execute:
+                    self.interpreter.generator_context['re_execute_statement'] = False
+                    logger.debug("Re-executing statement %d for athrow", stmt_index)
+                
                 try:
                     await self.interpreter.visit(stmt, wrap_exceptions=True)
                     # If no exception, move to next statement
                     stmt_index += 1
                 except YieldException as ye:
+                    logger.debug("Caught YieldException with value: %s", ye.value)
                     # When we catch a YieldException, yield the value to the caller
                     # and wait for a value to be sent back
                     sent_value = yield ye.value
+                    logger.debug("Generator resumed after yield with sent_value: %s", sent_value)
                     
                     # Store the sent value for any subsequent yield expressions
                     self.interpreter.generator_context['last_sent_value'] = sent_value
@@ -120,6 +129,8 @@ class StatefulAsyncGenerator:
                     if last_yield_key:
                         resuming_key = f'resuming_{last_yield_key}'
                         self.interpreter.generator_context[resuming_key] = True
+                        # Set a flag to indicate we're resuming from asend
+                        self.interpreter.generator_context['resuming_from_asend'] = True
                         logger.debug("Setting resuming flag for yield %s", last_yield_key)
                     
                     # Check if we're inside a suspended loop
@@ -130,8 +141,30 @@ class StatefulAsyncGenerator:
                         logger.debug("Loop suspended, not advancing statement index")
                         # Continue with the same statement (the loop)
                     else:
-                        # For simple yield statements, advance to the next statement
-                        stmt_index += 1
+                        # Check if this is a yield expression within a statement (e.g., assignment)
+                        # In that case, we need to re-execute the statement to complete it
+                        current_stmt = self.statements[stmt_index]
+                        
+                        # Check if we need to re-execute because of athrow
+                        exception_thrown = self.interpreter.generator_context.get('exception_thrown', False)
+                        if exception_thrown:
+                            # Don't advance - re-execute the same statement so the exception can be thrown
+                            logger.debug("Re-executing statement %d for athrow exception", stmt_index)
+                            # Clear the flag to prevent infinite loops
+                            # Note: don't clear exception_thrown here, let the yield visitor handle it
+                            continue
+                        
+                        # If the statement is an assignment or other complex statement containing yield,
+                        # we should re-execute it so the yield expression can return the sent value
+                        elif isinstance(current_stmt, (ast.Assign, ast.AugAssign, ast.AnnAssign, ast.Return, ast.Expr)):
+                            # Don't advance - re-execute the same statement to complete the assignment
+                            logger.debug("Re-executing statement %d to complete yield expression", stmt_index)
+                        else:
+                            # For simple yield statements, advance to the next statement
+                            stmt_index += 1
+                except Exception as e:
+                    logger.debug("Unexpected exception in generator execution: %s (type: %s)", e, type(e))
+                    raise
                     
         finally:
             self.interpreter.generator_context['active'] = False

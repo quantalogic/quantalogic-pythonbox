@@ -58,16 +58,27 @@ async def visit_Yield(self: ASTInterpreter, node: ast.Yield, wrap_exceptions: bo
             generator_stack = self.generator_context.get('generator_stack', [])
             current_generator_id = generator_stack[-1] if generator_stack else None
             
-            # Create a unique key for this specific yield based on generator ID, line number and execution count
+            # Create a unique key for this specific yield based on generator ID and line number
             yield_line = getattr(node, 'lineno', 0)
             
-            # Use execution count to differentiate yields on the same line in loops
-            yield_count_key = f'yield_count_{current_generator_id}_{yield_line}'
-            yield_count = self.generator_context.get(yield_count_key, 0)
-            self.generator_context[yield_count_key] = yield_count + 1
+            # First check if we're resuming from a previous asend/athrow
+            generator_resuming = self.generator_context.get('resuming_from_asend', False)
+            last_yield_key = self.generator_context.get('last_yield_key')
             
-            yield_key = f'yield_{current_generator_id}_{yield_line}_{yield_count}'
-            resuming_key = f'resuming_{yield_key}'
+            if generator_resuming and last_yield_key:
+                # We're resuming from asend/athrow, use the last yield key
+                yield_key = last_yield_key
+                resuming_key = f'resuming_{yield_key}'
+                # Clear the resuming flag to prevent infinite loops
+                self.generator_context['resuming_from_asend'] = False
+            else:
+                # Use execution count to differentiate yields on the same line in loops
+                yield_count_key = f'yield_count_{current_generator_id}_{yield_line}'
+                yield_count = self.generator_context.get(yield_count_key, 0)
+                self.generator_context[yield_count_key] = yield_count + 1
+                
+                yield_key = f'yield_{current_generator_id}_{yield_line}_{yield_count}'
+                resuming_key = f'resuming_{yield_key}'
             
             logger.debug("Generator stack: %s, current generator ID: %s, yield key: %s, resuming key: %s", 
                         generator_stack, current_generator_id, yield_key, resuming_key)
@@ -83,6 +94,10 @@ async def visit_Yield(self: ASTInterpreter, node: ast.Yield, wrap_exceptions: bo
                     if thrown_exc:
                         logger.debug("Throwing exception from yield %s: %s", yield_key, thrown_exc)
                         raise thrown_exc
+                    else:
+                        logger.debug("exception_thrown flag was set but no thrown_exception found")
+                else:
+                    logger.debug("No exception to throw, resuming normally")
                 
                 # Return the sent value (instead of yielding again)
                 sent_value = self.generator_context.get('last_sent_value')
