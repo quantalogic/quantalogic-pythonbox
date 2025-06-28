@@ -409,6 +409,11 @@ class ASTInterpreter:
             self.recursion_depth -= 1
             raise
         except Exception as e:
+            # Allow YieldException to pass through without wrapping
+            from .exceptions import YieldException
+            if isinstance(e, YieldException):
+                self.recursion_depth -= 1
+                raise
             self.recursion_depth -= 1
             if not wrap_exceptions:
                 raise

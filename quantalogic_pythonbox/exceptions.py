@@ -11,6 +11,12 @@ class BreakException(Exception):
 class ContinueException(Exception):
     pass
 
+class YieldException(Exception):
+    """Exception used internally to signal generator yields."""
+    def __init__(self, value=None):
+        self.value = value
+        super().__init__()
+
 class BaseExceptionGroup(Exception):
     def __init__(self, message: str, exceptions: List[Exception]):
         super().__init__(message)

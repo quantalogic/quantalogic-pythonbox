@@ -77,27 +77,88 @@ async def visit_For(self: ASTInterpreter, node: ast.For, wrap_exceptions: bool =
 
 async def visit_AsyncFor(self: ASTInterpreter, node: ast.AsyncFor, wrap_exceptions: bool = True) -> None:
     logger.debug("Visiting AsyncFor")
-    iterable = await self.visit(node.iter, wrap_exceptions=wrap_exceptions)
-    broke = False
-    if hasattr(iterable, '__aiter__'):
-        async for value in iterable:
-            logger.debug(f"AsyncFor iteration with value: {value}")
-            await self.assign(node.target, value)
-            try:
-                for stmt in node.body:
+    from .exceptions import YieldException
+    
+    # Check if we're in a generator context that needs yield forwarding
+    is_generator = hasattr(self, 'generator_context') and self.generator_context.get('yielding', False)
+    
+    if is_generator:
+        # In generator context, return an async generator that handles yields cooperatively
+        async def async_for_generator():
+            iterable = await self.visit(node.iter, wrap_exceptions=wrap_exceptions)
+            broke = False
+            
+            if hasattr(iterable, '__aiter__'):
+                async for value in iterable:
+                    logger.debug("AsyncFor iteration with value: %s", value)
+                    await self.assign(node.target, value)
+                    
+                    # Execute body statements and yield any values
+                    for stmt in node.body:
+                        try:
+                            # Temporarily disable generator yielding for non-yield statements
+                            old_yielding = self.generator_context.get('yielding', False)
+                            if hasattr(stmt, 'value') and hasattr(stmt.value, '__class__') and stmt.value.__class__.__name__ != 'Yield':
+                                self.generator_context['yielding'] = False
+                            
+                            await self.visit(stmt, wrap_exceptions=wrap_exceptions)
+                            
+                            # Restore yielding state
+                            self.generator_context['yielding'] = old_yielding
+                            
+                        except YieldException as ye:
+                            # Handle yield from loop body
+                            yield ye.value
+                        except BreakException:
+                            logger.debug("Break in AsyncFor")
+                            broke = True
+                            break
+                        except ContinueException:
+                            logger.debug("Continue in AsyncFor")
+                            break  # Break from stmt loop to continue with next iteration
+                    
+                    if broke:
+                        break
+            else:
+                raise TypeError(f"Object {iterable} is not an async iterable")
+            
+            if not broke:
+                for stmt in node.orelse:
                     await self.visit(stmt, wrap_exceptions=wrap_exceptions)
-            except BreakException:
-                logger.debug("Break in AsyncFor")
-                broke = True
-                break
-            except ContinueException:
-                logger.debug("Continue in AsyncFor")
-                continue
+        
+        # Return the generator and let the caller iterate over it
+        return async_for_generator()
     else:
-        raise TypeError(f"Object {iterable} is not an async iterable")
-    if not broke:
-        for stmt in node.orelse:
-            await self.visit(stmt, wrap_exceptions=wrap_exceptions)
+        # Normal non-generator execution
+        iterable = await self.visit(node.iter, wrap_exceptions=wrap_exceptions)
+        broke = False
+        
+        if hasattr(iterable, '__aiter__'):
+            async for value in iterable:
+                logger.debug("AsyncFor iteration with value: %s", value)
+                await self.assign(node.target, value)
+                
+                # Execute body statements
+                for stmt in node.body:
+                    try:
+                        await self.visit(stmt, wrap_exceptions=wrap_exceptions)
+                    except BreakException:
+                        logger.debug("Break in AsyncFor")
+                        broke = True
+                        break
+                    except ContinueException:
+                        logger.debug("Continue in AsyncFor")
+                        break  # Break from stmt loop to continue with next iteration
+                
+                if broke:
+                    break
+        else:
+            raise TypeError(f"Object {iterable} is not an async iterable")
+        
+        if not broke:
+            for stmt in node.orelse:
+                await self.visit(stmt, wrap_exceptions=wrap_exceptions)
+        
     logger.debug("AsyncFor completed")
 
 async def visit_Break(self: ASTInterpreter, node: ast.Break, wrap_exceptions: bool = True) -> None:

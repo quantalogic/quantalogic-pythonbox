@@ -41,6 +41,28 @@ async def visit_Assert(self: ASTInterpreter, node: ast.Assert, wrap_exceptions: 
 
 async def visit_Yield(self: ASTInterpreter, node: ast.Yield, wrap_exceptions: bool = True) -> Any:
     logger.debug("Visiting Yield")
+    
+    # Check if we're in an async generator context
+    if hasattr(self, 'generator_context') and self.generator_context.get('active', False):
+        state = self.generator_context.get('state')
+        if state and state.collecting:
+            # Collect the yield value
+            if node.value:
+                value = await self.visit(node.value, wrap_exceptions=wrap_exceptions)
+            else:
+                value = None
+            state.yields.append(value)
+            return None
+        else:
+            # Fall back to exception-based approach for non-collecting generators
+            from .exceptions import YieldException
+            if node.value:
+                value = await self.visit(node.value, wrap_exceptions=wrap_exceptions)
+            else:
+                value = None
+            raise YieldException(value)
+    
+    # Fallback for non-generator contexts
     if node.value:
         return await self.visit(node.value, wrap_exceptions=wrap_exceptions)
     return None
