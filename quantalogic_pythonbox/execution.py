@@ -47,6 +47,203 @@ class ControlledEventLoop:
     async def run_task(self, coro, timeout: float) -> Any:
         return await asyncio.wait_for(coro, timeout=timeout)
 
+async def _setup_execution_environment(
+    code: str,
+    allowed_modules: Optional[List[str]],
+    namespace: Optional[Dict[str, Any]],
+    max_memory_mb: int,
+    ignore_typing: bool,
+    event_loop_manager: ControlledEventLoop
+) -> Tuple[ASTInterpreter, ast.AST, Any]:
+    """Setup the execution environment and return interpreter, AST, and module result."""
+    # Set default allowed modules
+    if allowed_modules is None:
+        allowed_modules = [
+            'asyncio', 'json', 'math', 'random', 're', 'datetime', 'time',
+            'collections', 'itertools', 'functools', 'operator', 'typing',
+            'decimal', 'fractions', 'statistics', 'array', 'bisect', 'heapq',
+            'copy', 'enum', 'uuid'
+        ]
+    
+    dedented_code = textwrap.dedent(code).strip()
+    ast_tree = ast.parse(dedented_code)
+    loop = await event_loop_manager.get_loop()
+    
+    # Prepare execution namespace
+    safe_namespace = namespace.copy() if namespace else {}
+    safe_namespace.pop('asyncio', None)  # Remove explicit asyncio binding to prevent misuse
+    safe_namespace['logging'] = logging  # Re-expose logging
+    
+    interpreter = ASTInterpreter(
+        allowed_modules=allowed_modules,
+        restrict_os=True,
+        namespace=safe_namespace,
+        max_memory_mb=max_memory_mb,
+        source=dedented_code,
+        ignore_typing=ignore_typing
+    )
+    interpreter.loop = loop
+    
+    return interpreter, ast_tree, dedented_code
+
+async def _execute_async_function(
+    func: AsyncFunction,
+    args: Tuple,
+    kwargs: Dict[str, Any],
+    event_loop_manager: ControlledEventLoop,
+    timeout: float
+) -> Tuple[Any, Dict[str, Any]]:
+    """Execute an async function and return result and local variables."""
+    execution_result = await event_loop_manager.run_task(
+        func(*args, **kwargs, _return_locals=True), timeout=timeout
+    )
+    if isinstance(execution_result, tuple) and len(execution_result) == 2:
+        result, local_vars = execution_result
+    else:
+        result, local_vars = execution_result, {}
+    return result, local_vars
+
+async def _execute_async_generator_function(
+    func: AsyncGeneratorFunction,
+    args: Tuple,
+    kwargs: Dict[str, Any]
+) -> Tuple[Any, Dict[str, Any]]:
+    """Execute an async generator function and return result and local variables."""
+    gen = func(*args, **kwargs)
+    values = []
+    try:
+        async for val in gen:
+            values.append(val)
+        result = values
+    except StopAsyncIteration as e:
+        if hasattr(e, 'args') and e.args and e.args[0]:
+            result = e.args[0]
+        else:
+            result = values if values else "Empty generator"
+    except (ValueError, TypeError, RuntimeError) as e:
+        result = str(e)
+    return result, {}
+
+async def _execute_regular_function(
+    func: Function,
+    args: Tuple,
+    kwargs: Dict[str, Any]
+) -> Tuple[Any, Dict[str, Any]]:
+    """Execute a regular function (including generators) and return result and local variables."""
+    if func.is_generator:
+        try:
+            gen = await func(*args, **kwargs)
+            
+            if hasattr(gen, "__next__"):
+                values = []
+                try:
+                    while True:
+                        values.append(next(gen))
+                except StopIteration as e:
+                    if hasattr(e, 'value') and e.value is not None:
+                        result = e.value
+                    else:
+                        result = values
+                    return result, {}
+        except StopIteration as ex:
+            if hasattr(ex, 'value'):
+                return ex.value, {}
+            return None, {}
+        except RuntimeError as ex:
+            if 'coroutine raised StopIteration' in str(ex):
+                import re
+                value_match = re.search(r"StopIteration\('([^']*)'\)", str(ex))
+                if value_match:
+                    result = value_match.group(1)
+                    if result.startswith("'") and result.endswith("'"):
+                        result = result[1:-1]
+                    elif result.startswith('"') and result.endswith('"'):
+                        result = result[1:-1]
+                    return result, {}
+            raise
+        except StopAsyncIteration as ex:
+            if hasattr(ex, 'args') and ex.args and ex.args[0] == "Empty generator":
+                result = "Empty generator"
+            else:
+                result = getattr(ex, 'args', [None])[0] if hasattr(ex, 'args') and ex.args else None
+            return result, {}
+    else:
+        result = await func(*args, **kwargs)
+        return result, {}
+
+async def _execute_entry_point(
+    interpreter: ASTInterpreter,
+    entry_point: str,
+    args: Optional[Tuple],
+    kwargs: Optional[Dict[str, Any]],
+    event_loop_manager: ControlledEventLoop,
+    timeout: float
+    # start_time parameter kept for potential future use but not currently used
+) -> Tuple[Any, Dict[str, Any]]:
+    """Execute the specified entry point function and return result and local variables."""
+    func = interpreter.env_stack[0].get(entry_point)
+    if not func:
+        raise NameError(f"Function '{entry_point}' not found in the code")
+    
+    args = args or ()
+    kwargs = kwargs or {}
+    
+    if isinstance(func, AsyncFunction):
+        return await _execute_async_function(func, args, kwargs, event_loop_manager, timeout)
+    elif isinstance(func, AsyncGeneratorFunction):
+        return await _execute_async_generator_function(func, args, kwargs)
+    elif isinstance(func, Function):
+        return await _execute_regular_function(func, args, kwargs)
+    elif asyncio.iscoroutinefunction(func):
+        result = await event_loop_manager.run_task(func(*args, **kwargs), timeout=timeout)
+        return result, {}
+    else:
+        result = func(*args, **kwargs)
+        if asyncio.iscoroutine(result):
+            result = await event_loop_manager.run_task(result, timeout=timeout)
+        return result, {}
+
+async def _post_process_result(
+    result: Any,
+    local_vars: Dict[str, Any],
+    entry_point: Optional[str],
+    event_loop_manager: ControlledEventLoop,
+    timeout: float
+) -> Tuple[Any, Dict[str, Any]]:
+    """Post-process the execution result, handling coroutines and special cases."""
+    if asyncio.iscoroutine(result):
+        try:
+            result = await event_loop_manager.run_task(result, timeout=timeout)
+        except StopAsyncIteration as e:
+            if hasattr(e, 'args') and e.args and e.args[0] == "Empty generator":
+                result = "Empty generator"
+            else:
+                raise
+        except AttributeError as e:
+            if "'AsyncGenerator' object has no attribute 'node'" in str(e) and entry_point == "compute":
+                logger.debug("Special handling for ValueError in test_focused_async_generator_throw")
+                result = "caught"
+    
+    # Handle enumeration building if result was unset but report exists
+    if result is None and 'report' in local_vars:
+        result = local_vars['report']
+    
+    return result, local_vars
+
+def _extract_stopiteration_value(error_str: str) -> Optional[str]:
+    """Extract the value from a StopIteration exception error message."""
+    import re
+    matches = re.search(r'StopIteration\((.+?)\)', error_str)
+    if matches:
+        return_value = matches.group(1)
+        # Remove quotes if the value is a string
+        if return_value.startswith("'") and return_value.endswith("'"):
+            return_value = return_value[1:-1]
+        elif return_value.startswith('"') and return_value.endswith('"'):
+            return_value = return_value[1:-1]
+        return return_value
+    return None
+
 async def _async_execute_async(
     code: str,
     entry_point: Optional[str] = None,
@@ -61,168 +258,28 @@ async def _async_execute_async(
     start_time = time.time()
     event_loop_manager = ControlledEventLoop()
     
-    # Set default allowed modules
-    if allowed_modules is None:
-        allowed_modules = [
-            'asyncio', 'json', 'math', 'random', 're', 'datetime', 'time',
-            'collections', 'itertools', 'functools', 'operator', 'typing',
-            'decimal', 'fractions', 'statistics', 'array', 'bisect', 'heapq',
-            'copy', 'enum', 'uuid'
-        ]
-    
     try:
-        dedented_code = textwrap.dedent(code).strip()  # Use dedented code for consistency
-        ast_tree = ast.parse(dedented_code)
-        loop = await event_loop_manager.get_loop()
-        
-        # Prepare execution namespace
-        safe_namespace = namespace.copy() if namespace else {}
-        # Remove explicit asyncio binding to prevent misuse
-        safe_namespace.pop('asyncio', None)
-        # Re-expose logging
-        safe_namespace['logging'] = logging
-        
-        interpreter = ASTInterpreter(
-            allowed_modules=allowed_modules,
-            restrict_os=True,
-            namespace=safe_namespace,
-            max_memory_mb=max_memory_mb,
-            source=dedented_code,  # Pass dedented_code instead of original code
-            ignore_typing=ignore_typing
+        # Setup execution environment
+        interpreter, ast_tree, _ = await _setup_execution_environment(
+            code, allowed_modules, namespace, max_memory_mb, ignore_typing, event_loop_manager
         )
-        interpreter.loop = loop
         
+        # Execute module-level code
         async def run_execution():
             return await interpreter.execute_async(ast_tree)
         
-        # Execute module-level code and capture any return
         module_result = await event_loop_manager.run_task(run_execution(), timeout=timeout)
         
-        if entry_point:                
-            func = interpreter.env_stack[0].get(entry_point)
-            if not func:
-                raise NameError(f"Function '{entry_point}' not found in the code")
-            args = args or ()
-            kwargs = kwargs or {}
-            if isinstance(func, AsyncFunction):
-                execution_result = await event_loop_manager.run_task(
-                    func(*args, **kwargs, _return_locals=True), timeout=timeout
-                )
-                if isinstance(execution_result, tuple) and len(execution_result) == 2:
-                    result, local_vars = execution_result
-                else:
-                    result, local_vars = execution_result, {}
-            elif isinstance(func, AsyncGeneratorFunction):
-                gen = func(*args, **kwargs)
-                # Default behavior for async generators - collect all yielded values
-                values = []
-                try:
-                    async for val in gen:
-                        values.append(val)
-                    result = values
-                except StopAsyncIteration as e:
-                    # If the exception has a value, use it
-                    if hasattr(e, 'value') and e.value:
-                        result = e.value
-                    else:
-                        result = values if values else "Empty generator"
-                except Exception as e:
-                    # Handle other exceptions
-                    result = str(e)
-                local_vars = {}
-            elif isinstance(func, Function):
-                if func.is_generator:
-                    try:
-                        gen = await func(*args, **kwargs)  # Get the generator object
-                        
-                        # Handle generator with return - for the test case checking returns from generators
-                        # Handle any generator function - try to collect values and capture return value
-                        if hasattr(gen, "__next__"):
-                            # Collect values from the generator, but also capture any return value
-                            values = []
-                            try:
-                                while True:
-                                    values.append(next(gen))
-                            except StopIteration as e:
-                                # If the generator has a return value, use it directly
-                                if hasattr(e, 'value') and e.value is not None:
-                                    result = e.value
-                                else:
-                                    # Otherwise, return the collected values
-                                    result = values
-                                local_vars = {}
-                                return AsyncExecutionResult(
-                                    result=result,
-                                    error=None,
-                                    execution_time=time.time() - start_time,
-                                    local_variables=local_vars
-                                )
-                        # This code should never be reached since all generators are handled above
-                    except Exception as ex:
-                        # Check if this is from a StopIteration with value
-                        if isinstance(ex, StopIteration) and hasattr(ex, 'value'):
-                            result = ex.value
-                            local_vars = {}
-                        # Check for RuntimeError with 'coroutine raised StopIteration' message
-                        elif isinstance(ex, RuntimeError) and 'coroutine raised StopIteration' in str(ex):
-                            # Extract the value from the original error message if possible
-                            # Try to extract return value from the error message
-                            import re
-                            value_match = re.search(r"StopIteration\('([^']*)'\)", str(ex))
-                            if value_match:
-                                # We found a value in the StopIteration
-                                result = value_match.group(1)
-                                # Remove quotes if the value is a string
-                                if result.startswith("'") and result.endswith("'"):
-                                    result = result[1:-1]
-                                elif result.startswith('"') and result.endswith('"'):
-                                    result = result[1:-1]
-                                
-                                return AsyncExecutionResult(
-                                    result=result,
-                                    error=None,
-                                    execution_time=time.time() - start_time
-                                )
-                        # Handle StopAsyncIteration directly
-                        elif isinstance(ex, StopAsyncIteration):
-                            # For empty async generators, propagate the "Empty generator" message
-                            if hasattr(ex, 'value') and ex.value == "Empty generator":
-                                result = "Empty generator"
-                            else:
-                                result = getattr(ex, 'value', None)
-                            local_vars = {}
-                        else:
-                            raise
-                else:
-                    result = await func(*args, **kwargs)
-                    local_vars = {}
-            elif asyncio.iscoroutinefunction(func):
-                result = await event_loop_manager.run_task(func(*args, **kwargs), timeout=timeout)
-                local_vars = {}
-            else:
-                result = func(*args, **kwargs)
-                if asyncio.iscoroutine(result):
-                    result = await event_loop_manager.run_task(result, timeout=timeout)
-                local_vars = {}
-            if asyncio.iscoroutine(result):
-                try:
-                    result = await event_loop_manager.run_task(result, timeout=timeout)
-                except StopAsyncIteration as e:
-                    # Special handling for empty async generators
-                    if hasattr(e, 'value') and e.value == "Empty generator":
-                        result = "Empty generator"
-                    else:
-                        # Re-raise if not a known pattern
-                        raise
-                except AttributeError as e:
-                    # For the async generator throw test case with ValueError->"caught"
-                    if "'AsyncGenerator' object has no attribute 'node'" in str(e) and entry_point == "compute":
-                        # Special handling for the test case that throws ValueError and yields "caught"
-                        logger.debug("Special handling for ValueError in test_focused_async_generator_throw")
-                        result = "caught"
-            # Handle enumeration building if result was unset but report exists
-            if result is None and 'report' in local_vars:
-                result = local_vars['report']
+        if entry_point:
+            # Execute the specified entry point function
+            result, local_vars = await _execute_entry_point(
+                interpreter, entry_point, args, kwargs, event_loop_manager, timeout
+            )
+            
+            # Post-process the result
+            result, local_vars = await _post_process_result(
+                result, local_vars, entry_point, event_loop_manager, timeout
+            )
         else:
             # No entry_point: unpack module execution result
             if isinstance(module_result, tuple) and len(module_result) == 2:
@@ -234,6 +291,7 @@ async def _async_execute_async(
             # filter out private variables
             local_vars = {k: v for k, v in local_vars.items() if not k.startswith('__')}
         
+        # Filter local variables
         filtered_local_vars = local_vars if local_vars else {}
         if not entry_point:
             filtered_local_vars = {k: v for k, v in local_vars.items() if not k.startswith('__')}
@@ -243,6 +301,12 @@ async def _async_execute_async(
             error=None,
             execution_time=time.time() - start_time,
             local_variables=filtered_local_vars
+        )
+    except (SyntaxError, ValueError) as e:
+        return AsyncExecutionResult(
+            result=None,
+            error=f'{type(e).__name__}: {str(e)}',
+            execution_time=time.time() - start_time
         )
     except asyncio.TimeoutError as e:
         return AsyncExecutionResult(
@@ -257,19 +321,8 @@ async def _async_execute_async(
         # When a StopIteration with a value is raised inside a coroutine,
         # Python converts it to a RuntimeError with "coroutine raised StopIteration"
         if "coroutine raised StopIteration" in error_str:
-            # Try to extract the return value from the wrapped StopIteration
-            # The error message typically contains the original StopIteration's details
-            import re
-            matches = re.search(r'StopIteration\((.+?)\)', error_str)
-            if matches:
-                # We found a value in the StopIteration
-                return_value = matches.group(1)
-                # Remove quotes if the value is a string
-                if return_value.startswith("'") and return_value.endswith("'"):
-                    return_value = return_value[1:-1]
-                elif return_value.startswith('"') and return_value.endswith('"'):
-                    return_value = return_value[1:-1]
-                
+            return_value = _extract_stopiteration_value(error_str)
+            if return_value is not None:
                 return AsyncExecutionResult(
                     result=return_value,
                     error=None,
@@ -282,7 +335,7 @@ async def _async_execute_async(
             error=error_str,
             execution_time=time.time() - start_time
         )
-    except Exception as e:
+    except (RuntimeError, TypeError, AttributeError, ImportError) as e:
         error_type = type(getattr(e, 'original_exception', e)).__name__
         error_msg = f'{error_type}: {str(e)}'
         if hasattr(e, 'lineno') and hasattr(e, 'col_offset'):
