@@ -108,37 +108,35 @@ class StatefulAsyncGenerator:
                 re_execute = self.interpreter.generator_context.get('re_execute_statement', False)
                 if re_execute:
                     self.interpreter.generator_context['re_execute_statement'] = False
-                    logger.debug("Re-executing statement %d for athrow", stmt_index)
                 
                 try:
                     await self.interpreter.visit(stmt, wrap_exceptions=True)
                     # If no exception, move to next statement
                     stmt_index += 1
                 except YieldException as ye:
-                    logger.debug("Caught YieldException with value: %s", ye.value)
                     # When we catch a YieldException, yield the value to the caller
                     # and wait for a value to be sent back
                     sent_value = yield ye.value
-                    logger.debug("Generator resumed after yield with sent_value: %s", sent_value)
                     
                     # Store the sent value for any subsequent yield expressions
                     self.interpreter.generator_context['last_sent_value'] = sent_value
                     
-                    # Set the resuming flag for the specific yield that was just executed
-                    last_yield_key = self.interpreter.generator_context.get('last_yield_key')
-                    if last_yield_key:
-                        resuming_key = f'resuming_{last_yield_key}'
-                        self.interpreter.generator_context[resuming_key] = True
-                        # Set a flag to indicate we're resuming from asend
-                        self.interpreter.generator_context['resuming_from_asend'] = True
-                        logger.debug("Setting resuming flag for yield %s", last_yield_key)
+                    # Only set resuming flags if there's actually a sent value (asend operation)
+                    # For normal iteration, sent_value will be None and we don't want to set resuming flags
+                    if sent_value is not None:
+                        # Set the resuming flag for the specific yield that was just executed
+                        last_yield_key = self.interpreter.generator_context.get('last_yield_key')
+                        if last_yield_key:
+                            resuming_key = f'resuming_{last_yield_key}'
+                            self.interpreter.generator_context[resuming_key] = True
+                            # Set a flag to indicate we're resuming from asend
+                            self.interpreter.generator_context['resuming_from_asend'] = True
                     
                     # Check if we're inside a suspended loop
                     loop_suspended = self.interpreter.generator_context.get('loop_suspended', False)
                     if loop_suspended:
                         # Don't advance to the next statement - the loop should continue
                         self.interpreter.generator_context['loop_suspended'] = False
-                        logger.debug("Loop suspended, not advancing statement index")
                         # Continue with the same statement (the loop)
                     else:
                         # Check if this is a yield expression within a statement (e.g., assignment)
@@ -149,21 +147,25 @@ class StatefulAsyncGenerator:
                         exception_thrown = self.interpreter.generator_context.get('exception_thrown', False)
                         if exception_thrown:
                             # Don't advance - re-execute the same statement so the exception can be thrown
-                            logger.debug("Re-executing statement %d for athrow exception", stmt_index)
                             # Clear the flag to prevent infinite loops
                             # Note: don't clear exception_thrown here, let the yield visitor handle it
                             continue
                         
                         # If the statement is an assignment or other complex statement containing yield,
                         # we should re-execute it so the yield expression can return the sent value
-                        elif isinstance(current_stmt, (ast.Assign, ast.AugAssign, ast.AnnAssign, ast.Return, ast.Expr)):
+                        elif isinstance(current_stmt, (ast.Assign, ast.AugAssign, ast.AnnAssign, ast.Return)):
                             # Don't advance - re-execute the same statement to complete the assignment
-                            logger.debug("Re-executing statement %d to complete yield expression", stmt_index)
-                        else:
-                            # For simple yield statements, advance to the next statement
+                            pass
+                        elif isinstance(current_stmt, ast.Expr) and isinstance(current_stmt.value, ast.Yield):
+                            # For simple yield statements (ast.Expr containing ast.Yield), advance to the next statement
                             stmt_index += 1
-                except Exception as e:
-                    logger.debug("Unexpected exception in generator execution: %s (type: %s)", e, type(e))
+                        elif isinstance(current_stmt, ast.Expr):
+                            # For other expression statements that might contain yield, re-execute
+                            pass
+                        else:
+                            # For other statements, advance to the next statement
+                            stmt_index += 1
+                except Exception:
                     raise
                     
         finally:
@@ -195,8 +197,6 @@ class AsyncGeneratorFunction:
         self.kw_defaults = kw_defaults
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
-        logger.debug(f"Starting AsyncGeneratorFunction {self.node.name}")
-        
         # Set up the environment for the generator
         new_env_stack: List[Dict[str, Any]] = self.closure[:]
         local_frame: Dict[str, Any] = {}
@@ -253,7 +253,6 @@ class AsyncGeneratorFunction:
         new_interp: ASTInterpreter = self.interpreter.spawn_from_env(new_env_stack)
 
         # Return a stateful async generator that properly implements asend/athrow
-        logger.debug("Returning stateful async generator")
         return StatefulAsyncGenerator(new_interp, self.node.body)
 
     async def _execute_with_yields(self, interpreter, statements):

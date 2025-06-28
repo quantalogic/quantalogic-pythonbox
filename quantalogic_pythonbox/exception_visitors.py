@@ -93,17 +93,11 @@ async def visit_Try(self: ASTInterpreter, node: ast.Try, wrap_exceptions: bool =
             self.current_exception = re
             raise  # Re-raise the RuntimeError as is
     except Exception as e:
-        import logging
-        logger = logging.getLogger(__name__)
-        logger.debug("Try block caught exception: %s (type: %s)", e, type(e))
         self.current_exception = e  # Fix: Store the current exception
         original_e = e.original_exception if isinstance(e, WrappedException) else e
-        logger.debug("Original exception: %s (type: %s)", original_e, type(original_e))
         for handler in node.handlers:
             exc_type = await self._resolve_exception_type(handler.type)
-            logger.debug("Checking handler for type: %s", exc_type)
             if exc_type and isinstance(original_e, exc_type):
-                logger.debug("Exception matches handler for %s", exc_type)
                 if handler.name:
                     self.set_variable(handler.name, original_e)
                 handler_result = None
@@ -116,7 +110,6 @@ async def visit_Try(self: ASTInterpreter, node: ast.Try, wrap_exceptions: bool =
                     result = handler_result
                 break
         else:
-            logger.debug("No handler found for exception %s", original_e)
             raise
     else:
         for stmt in node.orelse:

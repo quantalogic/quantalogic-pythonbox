@@ -1,47 +1,32 @@
 import ast
-import logging
 from typing import Any
 
 from .interpreter_core import ASTInterpreter
 
-logging.basicConfig(level=logging.DEBUG)  # Set debug level
-
-# Configure logging
-logger = logging.getLogger(__name__)
-
 async def visit_Global(self: ASTInterpreter, node: ast.Global, wrap_exceptions: bool = True) -> None:
-    logger.debug(f"Visiting Global: {node.names}")
     self.env_stack[-1].setdefault("__global_names__", set()).update(node.names)
 
 async def visit_Nonlocal(self: ASTInterpreter, node: ast.Nonlocal, wrap_exceptions: bool = True) -> None:
-    logger.debug(f"Visiting Nonlocal: {node.names}")
     self.env_stack[-1].setdefault("__nonlocal_names__", set()).update(node.names)
 
 async def visit_Delete(self: ASTInterpreter, node: ast.Delete, wrap_exceptions: bool = True):
-    logger.debug("Visiting Delete")
     for target in node.targets:
         if isinstance(target, ast.Name):
             del self.env_stack[-1][target.id]
-            logger.debug(f"Deleted variable: {target.id}")
         elif isinstance(target, ast.Subscript):
             obj = await self.visit(target.value, wrap_exceptions=wrap_exceptions)
             key = await self.visit(target.slice, wrap_exceptions=wrap_exceptions)
             del obj[key]
-            logger.debug(f"Deleted subscript: {obj}[{key}]")
         else:
             raise Exception(f"Unsupported del target: {type(target).__name__}")
 
 async def visit_Assert(self: ASTInterpreter, node: ast.Assert, wrap_exceptions: bool = True) -> None:
-    logger.debug("Visiting Assert")
     test = await self.visit(node.test, wrap_exceptions=wrap_exceptions)
     if not test:
         msg = await self.visit(node.msg, wrap_exceptions=wrap_exceptions) if node.msg else "Assertion failed"
-        logger.debug(f"Assertion failed: {msg}")
         raise AssertionError(msg)
 
 async def visit_Yield(self: ASTInterpreter, node: ast.Yield, wrap_exceptions: bool = True) -> Any:
-    logger.debug("Visiting Yield")
-    
     # Check if we're in an async generator context
     if hasattr(self, 'generator_context') and self.generator_context.get('active', False):
         state = self.generator_context.get('state')
@@ -80,9 +65,6 @@ async def visit_Yield(self: ASTInterpreter, node: ast.Yield, wrap_exceptions: bo
                 yield_key = f'yield_{current_generator_id}_{yield_line}_{yield_count}'
                 resuming_key = f'resuming_{yield_key}'
             
-            logger.debug("Generator stack: %s, current generator ID: %s, yield key: %s, resuming key: %s", 
-                        generator_stack, current_generator_id, yield_key, resuming_key)
-            
             if self.generator_context.get(resuming_key, False):
                 # Reset the resuming flag for this specific yield
                 self.generator_context[resuming_key] = False
@@ -92,16 +74,10 @@ async def visit_Yield(self: ASTInterpreter, node: ast.Yield, wrap_exceptions: bo
                     self.generator_context['exception_thrown'] = False
                     thrown_exc = self.generator_context.get('thrown_exception')
                     if thrown_exc:
-                        logger.debug("Throwing exception from yield %s: %s", yield_key, thrown_exc)
                         raise thrown_exc
-                    else:
-                        logger.debug("exception_thrown flag was set but no thrown_exception found")
-                else:
-                    logger.debug("No exception to throw, resuming normally")
                 
                 # Return the sent value (instead of yielding again)
                 sent_value = self.generator_context.get('last_sent_value')
-                logger.debug("Resuming yield %s with sent value: %s", yield_key, sent_value)
                 return sent_value
             else:
                 # This is a fresh yield - evaluate the value and yield it
@@ -114,7 +90,6 @@ async def visit_Yield(self: ASTInterpreter, node: ast.Yield, wrap_exceptions: bo
                 
                 # Store this yield as the last one executed
                 self.generator_context['last_yield_key'] = yield_key
-                logger.debug("Fresh yield %s with value: %s", yield_key, value)
                 raise YieldException(value)
     
     # Fallback for non-generator contexts
