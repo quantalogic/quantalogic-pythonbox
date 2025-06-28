@@ -4,7 +4,7 @@ build-backend = "poetry.core.masonry.api"
 
 [project]
 name = "quantalogic-pythonbox"
-version = "0.9.13"
+version = "0.9.22"
 description = "A Python sandbox environment for implementing and testing CodeAct AI Agents."
 authors = [
   {name = "Raphael Mansuy", email = "raphael.mansuy@quantalogic.app"}
@@ -40,7 +40,7 @@ dependencies = [
 
 [tool.poetry]
 name = "quantalogic-pythonbox"
-version = "0.9.13"
+version = "0.9.22"
 description = "A Python sandbox environment for implementing and testing CodeAct AI Agents."
 authors = ["Raphael Mansuy <raphael.mansuy@quantalogic.app>"]
 readme = "README.md"
