@@ -10,22 +10,8 @@ authors = [
   {name = "Raphael Mansuy", email = "raphael.mansuy@quantalogic.app"}
 ]
 readme = "README.md"
-license = "Apache-2.0"
-
-[project.urls]
-"Homepage" = "https://github.com/quantalogic/quantalogic-pythonbox"
-"Bug Tracker" = "https://github.com/quantalogic/quantalogic-pythonbox/issues"
-
-[tool.poetry]
-name = "quantalogic-pythonbox"
-version = "0.9.13"
-description = "A Python sandbox environment for implementing and testing CodeAct AI Agents."
-authors = ["Raphael Mansuy <raphael.mansuy@quantalogic.app>"]
-readme = "README.md"
-license = "Apache-2.0"
-repository = "https://github.com/quantalogic/quantalogic-pythonbox"
-homepage = "https://github.com/quantalogic/quantalogic-pythonbox"
-documentation = "https://github.com/quantalogic/quantalogic-pythonbox#readme"
+license = {text = "Apache-2.0"}
+requires-python = ">=3.9"
 keywords = ["sandbox", "python", "codeact", "agent", "ast"]
 classifiers = [
   "Development Status :: 4 - Beta",
@@ -41,13 +27,31 @@ classifiers = [
   "Topic :: Software Development :: Libraries :: Python Modules",
   "Topic :: Software Development :: Interpreters",
 ]
+dependencies = [
+  "psutil>=7.0.0",
+  "loguru>=0.7.0"
+]
+
+[project.urls]
+"Homepage" = "https://github.com/quantalogic/quantalogic-pythonbox"
+"Repository" = "https://github.com/quantalogic/quantalogic-pythonbox"
+"Documentation" = "https://github.com/quantalogic/quantalogic-pythonbox#readme"
+"Bug Tracker" = "https://github.com/quantalogic/quantalogic-pythonbox/issues"
+
+[tool.poetry]
+name = "quantalogic-pythonbox"
+version = "0.9.13"
+description = "A Python sandbox environment for implementing and testing CodeAct AI Agents."
+authors = ["Raphael Mansuy <raphael.mansuy@quantalogic.app>"]
+readme = "README.md"
+repository = "https://github.com/quantalogic/quantalogic-pythonbox"
+homepage = "https://github.com/quantalogic/quantalogic-pythonbox"
+documentation = "https://github.com/quantalogic/quantalogic-pythonbox#readme"
 
 [tool.poetry.dependencies]
 python = ">=3.9"
 psutil = "^7.0.0"
 loguru = "^0.7.0"
-
-[tool.poetry.dev-dependencies]
 
 [tool.poetry.group.dev.dependencies]
 pytest-asyncio = "^0.26.0"
@@ -55,6 +59,3 @@ pytest = "^8.0.0"
 black = "^24.0.0"
 isort = "^5.13.0"
 mypy = "^1.8.0"
-
-[tool.poetry.urls]
-"Bug Tracker" = "https://github.com/quantalogic/quantalogic-pythonbox/issues"
