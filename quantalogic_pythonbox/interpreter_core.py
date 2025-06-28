@@ -300,6 +300,11 @@ class ASTInterpreter:
         )
         new_interp.loop = self.loop
         new_interp.var_cache = self.var_cache.copy()
+        
+        # Preserve generator context for async generators to maintain loop state
+        if hasattr(self, 'generator_context'):
+            new_interp.generator_context = self.generator_context
+        
         return new_interp
 
     def get_variable(self, name: str) -> Any:
@@ -409,6 +414,11 @@ class ASTInterpreter:
             self.recursion_depth -= 1
             raise
         except Exception as e:
+            # Allow YieldException to pass through without wrapping
+            from .exceptions import YieldException
+            if isinstance(e, YieldException):
+                self.recursion_depth -= 1
+                raise
             self.recursion_depth -= 1
             if not wrap_exceptions:
                 raise

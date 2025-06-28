@@ -143,7 +143,7 @@ async def main():
     return f"Custom slice: {sliced}"
 """
     result = await execute_async(source, entry_point="main")
-    assert result.result == "Custom slice: Slice(1,5,2)"
+    assert result.result == "Custom slice: slice(1, 5, 2)"
 
 # Helper test for generator with return
 @pytest.mark.asyncio

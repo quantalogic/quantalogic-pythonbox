@@ -4,15 +4,177 @@ Async generator function handling for the PythonBox interpreter.
 """
 
 import ast
-import logging
 from typing import Any, Dict, List, Optional
 
 from .interpreter_core import ASTInterpreter
-from .exceptions import ReturnException
 
-# Configure logging
-logging.basicConfig(level=logging.DEBUG)
-logger = logging.getLogger(__name__)
+
+class StatefulAsyncGenerator:
+    """A stateful async generator that properly implements asend and athrow"""
+    
+    def __init__(self, interpreter, statements):
+        self.interpreter = interpreter
+        self.statements = statements
+        self.coroutine = None
+        self.started = False
+        
+    def __aiter__(self):
+        return self
+        
+    async def __anext__(self):
+        """Standard async iteration protocol"""
+        return await self.asend(None)
+        
+    async def asend(self, value):
+        """Send a value to the generator"""
+        if not self.started:
+            self.started = True
+            self.coroutine = self._run_generator()
+            return await self.coroutine.asend(None)
+        else:
+            return await self.coroutine.asend(value)
+            
+    async def athrow(self, exc_type, exc_value=None, _traceback=None):
+        """Throw an exception into the generator"""
+        if not self.started:
+            self.started = True
+            self.coroutine = self._run_generator()
+            await self.coroutine.asend(None)  # Start the generator
+            
+        # Create the exception instance
+        if isinstance(exc_type, type) and issubclass(exc_type, BaseException):
+            if exc_value is None:
+                exception = exc_type()
+            else:
+                exception = exc_type(exc_value)
+        else:
+            exception = exc_type
+            
+        # Store the exception in context for the yield to throw
+        self.interpreter.generator_context['thrown_exception'] = exception
+        self.interpreter.generator_context['exception_thrown'] = True
+        
+        # Set the resuming flag for the specific yield that was last executed
+        last_yield_key = self.interpreter.generator_context.get('last_yield_key')
+        if last_yield_key:
+            resuming_key = f'resuming_{last_yield_key}'
+            self.interpreter.generator_context[resuming_key] = True
+            self.interpreter.generator_context['resuming_from_asend'] = True
+        
+        # Continue execution by sending None - the exception will be thrown when the yield resumes
+        try:
+            result = await self.coroutine.asend(None)
+            return result
+        except StopAsyncIteration:
+            raise
+            
+    async def aclose(self):
+        """Close the generator"""
+        if self.coroutine:
+            await self.coroutine.aclose()
+        
+    async def _run_generator(self):
+        """The actual async generator implementation"""
+        from .exceptions import YieldException
+        import uuid
+        
+        # Generate a unique ID for this generator instance
+        generator_id = str(uuid.uuid4())
+        
+        # Set up the interpreter context with a stack for nested generators
+        self.interpreter.generator_context['active'] = True
+        self.interpreter.generator_context['yielding'] = True
+        
+        # Push this generator onto the stack
+        if 'generator_stack' not in self.interpreter.generator_context:
+            self.interpreter.generator_context['generator_stack'] = []
+        self.interpreter.generator_context['generator_stack'].append(generator_id)
+        
+        try:
+            # Execute the entire function body naturally - let yields bubble up
+            stmt_index = 0
+            while stmt_index < len(self.statements):
+                stmt = self.statements[stmt_index]
+                
+                # Track current statement index for athrow
+                self.interpreter.generator_context['current_stmt_index'] = stmt_index
+                
+                # Check if we need to re-execute a statement (for athrow)
+                re_execute = self.interpreter.generator_context.get('re_execute_statement', False)
+                if re_execute:
+                    self.interpreter.generator_context['re_execute_statement'] = False
+                
+                try:
+                    await self.interpreter.visit(stmt, wrap_exceptions=True)
+                    # If no exception, move to next statement
+                    stmt_index += 1
+                except YieldException as ye:
+                    # When we catch a YieldException, yield the value to the caller
+                    # and wait for a value to be sent back
+                    sent_value = yield ye.value
+                    
+                    # Store the sent value for any subsequent yield expressions
+                    self.interpreter.generator_context['last_sent_value'] = sent_value
+                    
+                    # Only set resuming flags if there's actually a sent value (asend operation)
+                    # For normal iteration, sent_value will be None and we don't want to set resuming flags
+                    if sent_value is not None:
+                        # Set the resuming flag for the specific yield that was just executed
+                        last_yield_key = self.interpreter.generator_context.get('last_yield_key')
+                        if last_yield_key:
+                            resuming_key = f'resuming_{last_yield_key}'
+                            self.interpreter.generator_context[resuming_key] = True
+                            # Set a flag to indicate we're resuming from asend
+                            self.interpreter.generator_context['resuming_from_asend'] = True
+                    
+                    # Check if we're inside a suspended loop
+                    loop_suspended = self.interpreter.generator_context.get('loop_suspended', False)
+                    if loop_suspended:
+                        # Don't advance to the next statement - the loop should continue
+                        self.interpreter.generator_context['loop_suspended'] = False
+                        # Continue with the same statement (the loop)
+                    else:
+                        # Check if this is a yield expression within a statement (e.g., assignment)
+                        # In that case, we need to re-execute the statement to complete it
+                        current_stmt = self.statements[stmt_index]
+                        
+                        # Check if we need to re-execute because of athrow
+                        exception_thrown = self.interpreter.generator_context.get('exception_thrown', False)
+                        if exception_thrown:
+                            # Don't advance - re-execute the same statement so the exception can be thrown
+                            # Clear the flag to prevent infinite loops
+                            # Note: don't clear exception_thrown here, let the yield visitor handle it
+                            continue
+                        
+                        # If the statement is an assignment or other complex statement containing yield,
+                        # we should re-execute it so the yield expression can return the sent value
+                        elif isinstance(current_stmt, (ast.Assign, ast.AugAssign, ast.AnnAssign, ast.Return)):
+                            # Don't advance - re-execute the same statement to complete the assignment
+                            pass
+                        elif isinstance(current_stmt, ast.Expr) and isinstance(current_stmt.value, ast.Yield):
+                            # For simple yield statements (ast.Expr containing ast.Yield), advance to the next statement
+                            stmt_index += 1
+                        elif isinstance(current_stmt, ast.Expr):
+                            # For other expression statements that might contain yield, re-execute
+                            pass
+                        else:
+                            # For other statements, advance to the next statement
+                            stmt_index += 1
+                except Exception:
+                    raise
+                    
+        finally:
+            self.interpreter.generator_context['active'] = False
+            self.interpreter.generator_context['yielding'] = False
+            # Pop this generator from the stack
+            if 'generator_stack' in self.interpreter.generator_context:
+                try:
+                    self.interpreter.generator_context['generator_stack'].remove(generator_id)
+                except ValueError:
+                    pass  # Generator ID not in stack, that's okay
+            # Clean up the generator-specific resumption flag
+            self.interpreter.generator_context.pop(f'resuming_yield_{generator_id}', None)
+
 
 class AsyncGeneratorFunction:
     def __init__(self, node: ast.AsyncFunctionDef, closure: List[Dict[str, Any]], interpreter: ASTInterpreter,
@@ -29,31 +191,29 @@ class AsyncGeneratorFunction:
         self.pos_defaults = pos_defaults
         self.kw_defaults = kw_defaults
 
-    async def __call__(self, *args: Any, **kwargs: Any) -> Any:
-        logger.debug(f"Starting AsyncGeneratorFunction {self.node.name}")
-        
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        # Set up the environment for the generator
         new_env_stack: List[Dict[str, Any]] = self.closure[:]
         local_frame: Dict[str, Any] = {}
         local_frame[self.node.name] = self
 
+        # Handle parameter binding (same as before)
         num_posonly = len(self.posonly_params)
         num_pos_kw = len(self.pos_kw_params)
         total_pos = num_posonly + num_pos_kw
-        pos_args_used = 0
 
         for i, arg in enumerate(args):
             if i < num_posonly:
                 local_frame[self.posonly_params[i]] = arg
-                pos_args_used += 1
             elif i < total_pos:
                 local_frame[self.pos_kw_params[i - num_posonly]] = arg
-                pos_args_used += 1
             elif self.vararg_name:
                 if self.vararg_name not in local_frame:
                     local_frame[self.vararg_name] = []
                 local_frame[self.vararg_name].append(arg)
             else:
                 raise TypeError(f"Async generator '{self.node.name}' takes {total_pos} positional arguments but {len(args)} were given")
+                
         if self.vararg_name and self.vararg_name not in local_frame:
             local_frame[self.vararg_name] = tuple()
 
@@ -87,147 +247,23 @@ class AsyncGeneratorFunction:
         new_env_stack.append(local_frame)
         new_interp: ASTInterpreter = self.interpreter.spawn_from_env(new_env_stack)
 
-        async def execute():
-            logger.debug(f"Starting execution of {self.node.name}")
-            new_interp.generator_context['active'] = True
+        # Return a stateful async generator that properly implements asend/athrow
+        return StatefulAsyncGenerator(new_interp, self.node.body)
+
+    async def _execute_with_yields(self, interpreter, statements):
+        """Execute statements and yield any values produced by yield expressions."""
+        from .exceptions import YieldException
+        import inspect
+        
+        for stmt in statements:
             try:
-                for stmt in self.node.body:
-                    if isinstance(stmt, ast.Try):
-                        # Handle Try node to support yields within try-except
-                        try:
-                            for body_stmt in stmt.body:
-                                if isinstance(body_stmt, ast.Expr) and isinstance(body_stmt.value, ast.Yield):
-                                    value = await new_interp.visit(body_stmt.value.value, wrap_exceptions=True) if body_stmt.value.value else None
-                                    sent_value = yield value
-                                    if isinstance(sent_value, BaseException):
-                                        raise sent_value
-                                elif isinstance(body_stmt, ast.Assign) and len(body_stmt.targets) == 1 and isinstance(body_stmt.value, ast.Yield):
-                                    value = await new_interp.visit(body_stmt.value.value, wrap_exceptions=True) if body_stmt.value.value else None
-                                    sent_value = yield value
-                                    if isinstance(sent_value, BaseException):
-                                        raise sent_value
-                                    await new_interp.assign(body_stmt.targets[0], sent_value)
-                                else:
-                                    await new_interp.visit(body_stmt, wrap_exceptions=True)
-                        except Exception as e:
-                            handled = False
-                            for handler in stmt.handlers:
-                                exc_type = await new_interp._resolve_exception_type(handler.type)
-                                if exc_type and isinstance(e, exc_type):
-                                    if handler.name:
-                                        new_interp.set_variable(handler.name, e)
-                                    for handler_stmt in handler.body:
-                                        if isinstance(handler_stmt, ast.Expr) and isinstance(handler_stmt.value, ast.Yield):
-                                            value = await new_interp.visit(handler_stmt.value.value, wrap_exceptions=True) if handler_stmt.value.value else None
-                                            sent_value = yield value
-                                            if isinstance(sent_value, BaseException):
-                                                raise sent_value
-                                        elif isinstance(handler_stmt, ast.Assign) and len(handler_stmt.targets) == 1 and isinstance(handler_stmt.value, ast.Yield):
-                                            value = await new_interp.visit(handler_stmt.value.value, wrap_exceptions=True) if body_stmt.value.value else None
-                                            sent_value = yield value
-                                            if isinstance(sent_value, BaseException):
-                                                raise sent_value
-                                            await new_interp.assign(handler_stmt.targets[0], sent_value)
-                                        else:
-                                            await new_interp.visit(handler_stmt, wrap_exceptions=True)
-                                    handled = True
-                                    break
-                            if not handled:
-                                raise e
-                    else:
-                        # Handle non-Try statements as before
-                        if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Yield):
-                            value = await new_interp.visit(stmt.value.value, wrap_exceptions=True) if stmt.value.value else None
-                            sent_value = yield value
-                            if isinstance(sent_value, BaseException):
-                                raise sent_value
-                        elif isinstance(stmt, ast.Assign) and len(stmt.targets) == 1 and isinstance(stmt.value, ast.Yield):
-                            value = await new_interp.visit(stmt.value.value, wrap_exceptions=True) if stmt.value.value else None
-                            sent_value = yield value
-                            if isinstance(sent_value, BaseException):
-                                raise sent_value
-                            await new_interp.assign(stmt.targets[0], sent_value)
-                        else:
-                            await new_interp.visit(stmt, wrap_exceptions=True)
-                raise StopAsyncIteration  # Signal generator completion
-            except ReturnException as ret:
-                logger.debug(f"Caught ReturnException with value: {ret.value}")
-                raise StopAsyncIteration(ret.value)
-            finally:
-                logger.debug("Execution finished, setting active to False")
-                new_interp.generator_context['active'] = False
-                new_interp.generator_context['finished'] = True
-
-        class AsyncGenerator:
-            def __init__(self):
-                self.execute_gen = execute()
-                self.return_value = None
-
-            def __aiter__(self):
-                logger.debug("AsyncGenerator.__aiter__ called")
-                return self
-
-            async def __anext__(self):
-                logger.debug("Entering AsyncGenerator.__anext__")
-                try:
-                    value = await self.execute_gen.asend(None)
-                    logger.debug(f"Returning value from __anext__: {value}")
-                    return value
-                except RuntimeError as e:
-                    if "async generator raised StopAsyncIteration" in str(e):
-                        logger.debug("StopAsyncIteration in __anext__")
-                        raise StopAsyncIteration
-                    raise
-                except StopAsyncIteration as e:
-                    logger.debug(f"StopAsyncIteration in __anext__ with args: {e.args}")
-                    self.return_value = e.args[0] if e.args else None
-                    raise
-
-            async def asend(self, value):
-                logger.debug(f"Entering AsyncGenerator.asend with value: {value}")
-                try:
-                    value = await self.execute_gen.asend(value)
-                    logger.debug(f"Returning value from asend: {value}")
-                    return value
-                except RuntimeError as e:
-                    if "async generator raised StopAsyncIteration" in str(e):
-                        logger.debug("StopAsyncIteration in asend")
-                        raise StopAsyncIteration
-                    raise
-                except StopAsyncIteration as e:
-                    logger.debug(f"StopAsyncIteration in asend with args: {e.args}")
-                    self.return_value = e.args[0] if e.args else None
-                    raise
-
-            async def athrow(self, exc_type, exc_val=None, exc_tb=None):
-                logger.debug(f"Entering AsyncGenerator.athrow with exc_type: {exc_type}")
-                try:
-                    if exc_val is None:
-                        if isinstance(exc_type, type):
-                            exc_val = exc_type()
-                        else:
-                            exc_val = exc_type
-                    value = await self.execute_gen.athrow(exc_val)
-                    logger.debug(f"Returning value from athrow: {value}")
-                    return value
-                except RuntimeError as e:
-                    if "async generator raised StopAsyncIteration" in str(e):
-                        logger.debug("StopAsyncIteration in athrow")
-                        raise StopAsyncIteration
-                    raise
-                except StopAsyncIteration as e:
-                    logger.debug(f"StopAsyncIteration in athrow with args: {e.args}")
-                    self.return_value = e.args[0] if e.args else None
-                    raise
-
-            async def aclose(self):
-                logger.debug("Entering AsyncGenerator.aclose")
-                try:
-                    await self.execute_gen.aclose()
-                    logger.debug("Generator closed")
-                except Exception as e:
-                    logger.debug(f"Exception during aclose: {e}")
-                return self.return_value
-
-        logger.debug("Returning AsyncGenerator instance")
-        return AsyncGenerator()
+                result = await interpreter.visit(stmt, wrap_exceptions=True)
+                
+                # Check if the result is an async generator (from visit_AsyncFor in generator context)
+                if inspect.isasyncgen(result):
+                    # Iterate through the async generator and yield its values
+                    async for value in result:
+                        yield value
+                
+            except YieldException as ye:
+                yield ye.value

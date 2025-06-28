@@ -6,12 +6,17 @@ from .interpreter_core import ASTInterpreter
 
 
 async def visit_Try(self: ASTInterpreter, node: ast.Try, wrap_exceptions: bool = True) -> Any:
+    from .exceptions import YieldException
     result: Any = None
     try:
         for stmt in node.body:
             result = await self.visit(stmt, wrap_exceptions=False)
     except ReturnException as ret:
         raise ret
+    except YieldException:
+        # Let YieldException bubble up to the generator execution loop
+        # This should not be caught by user try-except blocks
+        raise
     except StopIteration as e:
         # Special handling for StopIteration to properly capture generator return values
         self.current_exception = e  # Store the current exception

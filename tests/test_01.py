@@ -62,15 +62,15 @@ class TestSearchEnumerations:
             {"title": "Story 2", "score": 31},
             {"title": "Story 3", "score": 27}
         ], """
-        1. Story 1 (Score: 42)
-        2. Story 2 (Score: 31)
-        3. Story 3 (Score: 27)"""),
+1. Story 1 (Score: 42)
+2. Story 2 (Score: 31)
+3. Story 3 (Score: 27)"""),
         ([
             {"title": "Item A", "score": 99},
             {"title": "Item B", "score": 101}
         ], """
-        1. Item A (Score: 99)
-        2. Item B (Score: 101)""")
+1. Item A (Score: 99)
+2. Item B (Score: 101)""")
     ])
     async def test_enumerate_search_results(self, input_data, expected):
         """Verify proper enumeration of search results"""
@@ -82,12 +82,12 @@ async def main():
     results = await search_stories("python")
     report = ""
     for index, story in enumerate(results, 1):
-        report += "\n"
+        report += "\\n"
         report += str(index)
         report += ". "
         report += story['title']
         report += " "
-        report += f"(Score: "
+        report += "(Score: "
         report += str(story['score'])
         report += ")"
     return report
@@ -117,11 +117,10 @@ async def main():
     results = await search_stories("python")
     report = ""
     for idx, story in enumerate(results, 1):
-        report += f"\n{idx}. {story['title']} (Score: {story['score']})"
+        report += f"\\n{idx}. {story['title']} (Score: {story['score']})"
     return report
 ''', entry_point='main')
-        assert result.result.strip() == """
-1. Lone Story (Score: 99)""".strip()
+        assert result.result.strip() == """1. Lone Story (Score: 99)""".strip()
 
     async def test_enumerate_missing_fields(self):
         """Verify graceful handling of missing fields"""
@@ -138,11 +137,10 @@ async def main():
     results = await search_stories("python")
     report = ""
     for idx, story in enumerate(results, 1):
-        report += f"\n{idx}. {story.get('title', 'Untitled')} (Score: {story.get('score', 'N/A')})"
+        report += f"\\n{idx}. {story.get('title', 'Untitled')} (Score: {story.get('score', 'N/A')})"
     return report
 ''', entry_point='main')
-        expected = """
-1. Complete Story (Score: 50)
+        expected = """1. Complete Story (Score: 50)
 2. Missing Score (Score: N/A)
 3. Untitled (Score: 30)
 4. Untitled (Score: N/A)"""
@@ -158,9 +156,9 @@ async def main():
     results = await search_stories("python")
     report = f"Found {len(results)} stories"
     for idx, story in enumerate(results[:5], 1):
-        report += f"\n{idx}. {story['title']} (Score: {story['score']})"
+        report += f"\\n{idx}. {story['title']} (Score: {story['score']})"
     if len(results) > 5:
-        report += "\n... (truncated)"
+        report += "\\n... (truncated)"
     return report
 ''', entry_point='main')
         assert "Found 100 stories" in result.result
