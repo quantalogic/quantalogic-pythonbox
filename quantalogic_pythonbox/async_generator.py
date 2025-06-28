@@ -8,11 +8,107 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from .interpreter_core import ASTInterpreter
-from .exceptions import ReturnException
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
+
+
+class StatefulAsyncGenerator:
+    """A stateful async generator that properly implements asend and athrow"""
+    
+    def __init__(self, interpreter, statements):
+        self.interpreter = interpreter
+        self.statements = statements
+        self.coroutine = None
+        self.started = False
+        
+    def __aiter__(self):
+        return self
+        
+    async def __anext__(self):
+        """Standard async iteration protocol"""
+        return await self.asend(None)
+        
+    async def asend(self, value):
+        """Send a value to the generator"""
+        logger.debug("asend called with value: %s", value)
+        
+        if not self.started:
+            self.started = True
+            self.coroutine = self._run_generator()
+            return await self.coroutine.asend(None)
+        else:
+            return await self.coroutine.asend(value)
+            
+    async def athrow(self, exc_type, exc_value=None, _traceback=None):
+        """Throw an exception into the generator"""
+        logger.debug("athrow called with exception: %s", exc_type)
+        
+        if not self.started:
+            self.started = True
+            self.coroutine = self._run_generator()
+            await self.coroutine.asend(None)  # Start the generator
+            
+        # Create the exception instance
+        if isinstance(exc_type, type) and issubclass(exc_type, BaseException):
+            if exc_value is None:
+                exception = exc_type()
+            else:
+                exception = exc_type(exc_value)
+        else:
+            exception = exc_type
+            
+        # Instead of delegating to coroutine.athrow, inject the exception
+        # into our interpreter's execution context
+        self.interpreter.generator_context['thrown_exception'] = exception
+        self.interpreter.generator_context['resuming_yield'] = True
+        self.interpreter.generator_context['exception_thrown'] = True  # Flag to indicate exception was thrown
+        
+        # Continue execution - the next yield will check for thrown exceptions
+        try:
+            return await self.coroutine.asend(None)
+        except StopAsyncIteration:
+            raise
+            
+    async def aclose(self):
+        """Close the generator"""
+        if self.coroutine:
+            await self.coroutine.aclose()
+        
+    async def _run_generator(self):
+        """The actual async generator implementation"""
+        from .exceptions import YieldException
+        
+        # Set up the interpreter context
+        self.interpreter.generator_context['active'] = True
+        self.interpreter.generator_context['yielding'] = True
+        
+        try:
+            # Execute the entire function body naturally - let yields bubble up
+            stmt_index = 0
+            while stmt_index < len(self.statements):
+                stmt = self.statements[stmt_index]
+                try:
+                    await self.interpreter.visit(stmt, wrap_exceptions=True)
+                    # If no exception, move to next statement
+                    stmt_index += 1
+                except YieldException as ye:
+                    # When we catch a YieldException, yield the value to the caller
+                    # and wait for a value to be sent back
+                    sent_value = yield ye.value
+                    
+                    # Store the sent value for any subsequent yield expressions
+                    self.interpreter.generator_context['last_sent_value'] = sent_value
+                    self.interpreter.generator_context['resuming_yield'] = True
+                    
+                    # Continue with the same statement to complete it (don't increment stmt_index)
+                    # The yield expression should now return the sent value
+                    
+        finally:
+            self.interpreter.generator_context['active'] = False
+            self.interpreter.generator_context['yielding'] = False
+
 
 class AsyncGeneratorFunction:
     def __init__(self, node: ast.AsyncFunctionDef, closure: List[Dict[str, Any]], interpreter: ASTInterpreter,
@@ -87,28 +183,9 @@ class AsyncGeneratorFunction:
         new_env_stack.append(local_frame)
         new_interp: ASTInterpreter = self.interpreter.spawn_from_env(new_env_stack)
 
-        # Create a real async generator that properly handles yields
-        async def generator_impl():
-            logger.debug(f"Starting execution of {self.node.name}")
-            new_interp.generator_context['active'] = True
-            new_interp.generator_context['yielding'] = True
-            
-            try:
-                # Execute the function body with proper yield handling
-                async for yielded_value in self._execute_with_yields(new_interp, self.node.body):
-                    logger.debug("Yielding value: %s", yielded_value)
-                    yield yielded_value
-                    
-            except ReturnException as ret:
-                logger.debug("Caught ReturnException with value: %s", ret.value)
-                return
-            finally:
-                logger.debug("Execution finished, setting active to False")
-                new_interp.generator_context['active'] = False
-                new_interp.generator_context['finished'] = True
-
-        logger.debug("Returning native async generator")
-        return generator_impl()
+        # Return a stateful async generator that properly implements asend/athrow
+        logger.debug("Returning stateful async generator")
+        return StatefulAsyncGenerator(new_interp, self.node.body)
 
     async def _execute_with_yields(self, interpreter, statements):
         """Execute statements and yield any values produced by yield expressions."""

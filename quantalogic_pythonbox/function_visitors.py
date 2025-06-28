@@ -183,6 +183,9 @@ async def visit_Call(self: ASTInterpreter, node: ast.Call, is_await_context: boo
             elif isinstance(func, AsyncFunction):
                 from .mock_coroutine import MockCoroutine
                 return MockCoroutine(func, evaluated_args, kwargs)
+            elif asyncio.iscoroutinefunction(func):
+                # This is a regular async function (like bound methods) - await it
+                return await result
             else:
                 # This is a built-in async function like asyncio.sleep
                 return result

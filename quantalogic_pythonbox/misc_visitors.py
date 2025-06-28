@@ -54,13 +54,34 @@ async def visit_Yield(self: ASTInterpreter, node: ast.Yield, wrap_exceptions: bo
             state.yields.append(value)
             return None
         else:
-            # Fall back to exception-based approach for non-collecting generators
-            from .exceptions import YieldException
-            if node.value:
-                value = await self.visit(node.value, wrap_exceptions=wrap_exceptions)
+            # Check if we're resuming from a yield
+            if self.generator_context.get('resuming_yield', False):
+                # Reset the resuming flag
+                self.generator_context['resuming_yield'] = False
+                
+                # Check if there's an exception to throw
+                if self.generator_context.get('exception_thrown', False):
+                    self.generator_context['exception_thrown'] = False
+                    thrown_exc = self.generator_context.get('thrown_exception')
+                    if thrown_exc:
+                        logger.debug("Throwing exception from yield: %s", thrown_exc)
+                        raise thrown_exc
+                
+                # Return the sent value (instead of yielding again)
+                sent_value = self.generator_context.get('last_sent_value')
+                logger.debug("Resuming yield with sent value: %s", sent_value)
+                return sent_value
             else:
-                value = None
-            raise YieldException(value)
+                # This is a fresh yield - evaluate the value and yield it
+                from .exceptions import YieldException
+                
+                if node.value:
+                    value = await self.visit(node.value, wrap_exceptions=wrap_exceptions)
+                else:
+                    value = None
+                
+                logger.debug("Fresh yield with value: %s", value)
+                raise YieldException(value)
     
     # Fallback for non-generator contexts
     if node.value:

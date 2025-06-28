@@ -276,7 +276,7 @@ class Function:
             special_method.__self__ = instance
             return special_method
         else:
-            # Regular async binding for normal methods
+            # Regular binding for normal methods - sync functions get sync binding
             async def method(*args: Any, **kwargs: Any) -> Any:
                 return await self(instance, *args, **kwargs)
             method.__self__ = instance
