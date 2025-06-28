@@ -88,12 +88,50 @@ async def visit_AsyncFor(self: ASTInterpreter, node: ast.AsyncFor, wrap_exceptio
                       self.generator_context.get('active', False))
     
     if hasattr(iterable, '__aiter__'):
+        # Check if we're resuming from a previous suspension
+        loop_state_key = f'asyncfor_state_{id(node)}'
+        loop_state = self.generator_context.get(loop_state_key) if is_in_generator else None
+        
+        if loop_state:
+            # Resume from where we left off - continue with remaining statements
+            current_value = loop_state['current_value']
+            stmt_index = loop_state['stmt_index']
+            logger.debug("Resuming AsyncFor from stmt_index %d with value: %s", stmt_index, current_value)
+            
+            # Continue executing the remaining statements in the current iteration
+            for i in range(stmt_index, len(node.body)):
+                stmt = node.body[i]
+                try:
+                    await self.visit(stmt, wrap_exceptions=wrap_exceptions)
+                except BreakException:
+                    logger.debug("Break in AsyncFor")
+                    broke = True
+                    break
+                except ContinueException:
+                    logger.debug("Continue in AsyncFor")
+                    break
+                except YieldException as ye:
+                    # Store the state for resumption
+                    self.generator_context[loop_state_key] = {
+                        'current_value': current_value,
+                        'stmt_index': i + 1  # Next statement to execute
+                    }
+                    self.generator_context['loop_suspended'] = True
+                    logger.debug("AsyncFor suspended at stmt_index %d", i + 1)
+                    raise ye
+            
+            # Clear the loop state since we completed this iteration's remaining statements
+            self.generator_context.pop(loop_state_key, None)
+            
+            if broke:
+                return
+                
         async for value in iterable:
             logger.debug("AsyncFor iteration with value: %s", value)
             await self.assign(node.target, value)
             
             # Execute body statements
-            for stmt in node.body:
+            for stmt_index, stmt in enumerate(node.body):
                 try:
                     await self.visit(stmt, wrap_exceptions=wrap_exceptions)
                 except BreakException:
@@ -104,12 +142,14 @@ async def visit_AsyncFor(self: ASTInterpreter, node: ast.AsyncFor, wrap_exceptio
                     logger.debug("Continue in AsyncFor")
                     break  # Break from stmt loop to continue with next iteration
                 except YieldException as ye:
-                    # If we're inside a generator, we need to handle yields specially
+                    # If we're inside a generator, store the loop state
                     if is_in_generator:
-                        # Mark that this statement (the async for loop) should not advance
-                        # to the next statement after the yield
+                        self.generator_context[loop_state_key] = {
+                            'current_value': value,
+                            'stmt_index': stmt_index + 1  # Next statement to execute
+                        }
                         self.generator_context['loop_suspended'] = True
-                        logger.debug("AsyncFor suspended due to yield in generator")
+                        logger.debug("AsyncFor suspended at stmt_index %d due to yield", stmt_index + 1)
                     # Re-raise the YieldException to let the generator handle it
                     raise ye
             
