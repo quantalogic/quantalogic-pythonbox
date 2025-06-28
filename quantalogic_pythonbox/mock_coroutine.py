@@ -2,6 +2,8 @@
 Mock coroutine implementation for proper error simulation.
 """
 
+import collections.abc
+
 class MockCoroutine:
     """A mock coroutine that raises appropriate errors when compared"""
     
@@ -52,3 +54,6 @@ class MockCoroutine:
         async def coro():
             return await self.async_func(*self.args, **self.kwargs)
         return coro().__await__()
+
+# Register MockCoroutine as a coroutine type so asyncio.iscoroutine() recognizes it
+collections.abc.Coroutine.register(MockCoroutine)

@@ -104,6 +104,17 @@ class AsyncFunction:
     def __get__(self, instance: Any, owner: Any):
         if instance is None:
             return self
-        async def bound_method(*args: Any, **kwargs: Any) -> Any:
-            return await self(instance, *args, **kwargs)
-        return bound_method
+        
+        # Create a bound async function that the interpreter can recognize
+        class BoundAsyncMethod:
+            def __init__(self, async_func, instance):
+                self.async_func = async_func
+                self.instance = instance
+                
+            async def __call__(self, *args, **kwargs):
+                return await self.async_func(self.instance, *args, **kwargs)
+                
+            def __repr__(self):
+                return f"<bound method {self.async_func.node.name} of {self.instance}>"
+        
+        return BoundAsyncMethod(self, instance)
