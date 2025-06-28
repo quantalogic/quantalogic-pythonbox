@@ -4,14 +4,9 @@ Async generator function handling for the PythonBox interpreter.
 """
 
 import ast
-import logging
 from typing import Any, Dict, List, Optional
 
 from .interpreter_core import ASTInterpreter
-
-# Configure logging
-logging.basicConfig(level=logging.DEBUG)
-logger = logging.getLogger(__name__)
 
 
 class StatefulAsyncGenerator:

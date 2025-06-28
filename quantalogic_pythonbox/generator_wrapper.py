@@ -3,12 +3,6 @@
 Generator wrapper for handling synchronous generators in the PythonBox interpreter.
 """
 
-import logging
-
-# Configure logging
-logging.basicConfig(level=logging.DEBUG)
-logger = logging.getLogger(__name__)
-
 class GeneratorWrapper:
     def __init__(self, gen):
         self.gen = gen
@@ -28,7 +22,6 @@ class GeneratorWrapper:
             # Make sure to capture the return value from the generator
             if hasattr(e, 'value'):
                 self.return_value = e.value
-                logger.debug(f"Capturing generator return value: {e.value}")
             raise StopIteration(self.return_value)
 
     def send(self, value):
@@ -40,7 +33,6 @@ class GeneratorWrapper:
             self.closed = True
             if hasattr(e, 'value'):
                 self.return_value = e.value
-                logger.debug(f"Capturing generator return value from send: {e.value}")
             raise StopIteration(self.return_value)
 
     def throw(self, exc_type, exc_val=None, exc_tb=None):
@@ -60,7 +52,6 @@ class GeneratorWrapper:
             self.closed = True
             if hasattr(e, 'value'):
                 self.return_value = e.value
-                logger.debug(f"Capturing generator return value from throw: {e.value}")
             raise StopIteration(self.return_value)
 
     def close(self):
