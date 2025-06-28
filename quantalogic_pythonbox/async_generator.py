@@ -62,8 +62,13 @@ class StatefulAsyncGenerator:
         # Instead of delegating to coroutine.athrow, inject the exception
         # into our interpreter's execution context
         self.interpreter.generator_context['thrown_exception'] = exception
-        self.interpreter.generator_context['resuming_yield'] = True
         self.interpreter.generator_context['exception_thrown'] = True  # Flag to indicate exception was thrown
+        
+        # Set the resuming flag for the specific yield that was last executed
+        last_yield_key = self.interpreter.generator_context.get('last_yield_key')
+        if last_yield_key:
+            resuming_key = f'resuming_{last_yield_key}'
+            self.interpreter.generator_context[resuming_key] = True
         
         # Continue execution - the next yield will check for thrown exceptions
         try:
@@ -79,10 +84,19 @@ class StatefulAsyncGenerator:
     async def _run_generator(self):
         """The actual async generator implementation"""
         from .exceptions import YieldException
+        import uuid
         
-        # Set up the interpreter context
+        # Generate a unique ID for this generator instance
+        generator_id = str(uuid.uuid4())
+        
+        # Set up the interpreter context with a stack for nested generators
         self.interpreter.generator_context['active'] = True
         self.interpreter.generator_context['yielding'] = True
+        
+        # Push this generator onto the stack
+        if 'generator_stack' not in self.interpreter.generator_context:
+            self.interpreter.generator_context['generator_stack'] = []
+        self.interpreter.generator_context['generator_stack'].append(generator_id)
         
         try:
             # Execute the entire function body naturally - let yields bubble up
@@ -100,14 +114,36 @@ class StatefulAsyncGenerator:
                     
                     # Store the sent value for any subsequent yield expressions
                     self.interpreter.generator_context['last_sent_value'] = sent_value
-                    self.interpreter.generator_context['resuming_yield'] = True
                     
-                    # Continue with the same statement to complete it (don't increment stmt_index)
-                    # The yield expression should now return the sent value
+                    # Set the resuming flag for the specific yield that was just executed
+                    last_yield_key = self.interpreter.generator_context.get('last_yield_key')
+                    if last_yield_key:
+                        resuming_key = f'resuming_{last_yield_key}'
+                        self.interpreter.generator_context[resuming_key] = True
+                        logger.debug("Setting resuming flag for yield %s", last_yield_key)
+                    
+                    # Check if we're inside a suspended loop
+                    loop_suspended = self.interpreter.generator_context.get('loop_suspended', False)
+                    if loop_suspended:
+                        # Don't advance to the next statement - the loop should continue
+                        self.interpreter.generator_context['loop_suspended'] = False
+                        logger.debug("Loop suspended, not advancing statement index")
+                        # Continue with the same statement (the loop)
+                    else:
+                        # For simple yield statements, advance to the next statement
+                        stmt_index += 1
                     
         finally:
             self.interpreter.generator_context['active'] = False
             self.interpreter.generator_context['yielding'] = False
+            # Pop this generator from the stack
+            if 'generator_stack' in self.interpreter.generator_context:
+                try:
+                    self.interpreter.generator_context['generator_stack'].remove(generator_id)
+                except ValueError:
+                    pass  # Generator ID not in stack, that's okay
+            # Clean up the generator-specific resumption flag
+            self.interpreter.generator_context.pop(f'resuming_yield_{generator_id}', None)
 
 
 class AsyncGeneratorFunction:

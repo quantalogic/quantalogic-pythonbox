@@ -54,22 +54,39 @@ async def visit_Yield(self: ASTInterpreter, node: ast.Yield, wrap_exceptions: bo
             state.yields.append(value)
             return None
         else:
-            # Check if we're resuming from a yield
-            if self.generator_context.get('resuming_yield', False):
-                # Reset the resuming flag
-                self.generator_context['resuming_yield'] = False
+            # Get the current generator from the stack (most recent one)
+            generator_stack = self.generator_context.get('generator_stack', [])
+            current_generator_id = generator_stack[-1] if generator_stack else None
+            
+            # Create a unique key for this specific yield based on generator ID, line number and execution count
+            yield_line = getattr(node, 'lineno', 0)
+            
+            # Use execution count to differentiate yields on the same line in loops
+            yield_count_key = f'yield_count_{current_generator_id}_{yield_line}'
+            yield_count = self.generator_context.get(yield_count_key, 0)
+            self.generator_context[yield_count_key] = yield_count + 1
+            
+            yield_key = f'yield_{current_generator_id}_{yield_line}_{yield_count}'
+            resuming_key = f'resuming_{yield_key}'
+            
+            logger.debug("Generator stack: %s, current generator ID: %s, yield key: %s, resuming key: %s", 
+                        generator_stack, current_generator_id, yield_key, resuming_key)
+            
+            if self.generator_context.get(resuming_key, False):
+                # Reset the resuming flag for this specific yield
+                self.generator_context[resuming_key] = False
                 
                 # Check if there's an exception to throw
                 if self.generator_context.get('exception_thrown', False):
                     self.generator_context['exception_thrown'] = False
                     thrown_exc = self.generator_context.get('thrown_exception')
                     if thrown_exc:
-                        logger.debug("Throwing exception from yield: %s", thrown_exc)
+                        logger.debug("Throwing exception from yield %s: %s", yield_key, thrown_exc)
                         raise thrown_exc
                 
                 # Return the sent value (instead of yielding again)
                 sent_value = self.generator_context.get('last_sent_value')
-                logger.debug("Resuming yield with sent value: %s", sent_value)
+                logger.debug("Resuming yield %s with sent value: %s", yield_key, sent_value)
                 return sent_value
             else:
                 # This is a fresh yield - evaluate the value and yield it
@@ -80,7 +97,9 @@ async def visit_Yield(self: ASTInterpreter, node: ast.Yield, wrap_exceptions: bo
                 else:
                     value = None
                 
-                logger.debug("Fresh yield with value: %s", value)
+                # Store this yield as the last one executed
+                self.generator_context['last_yield_key'] = yield_key
+                logger.debug("Fresh yield %s with value: %s", yield_key, value)
                 raise YieldException(value)
     
     # Fallback for non-generator contexts

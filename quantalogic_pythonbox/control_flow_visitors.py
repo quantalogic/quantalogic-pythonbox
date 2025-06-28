@@ -83,6 +83,10 @@ async def visit_AsyncFor(self: ASTInterpreter, node: ast.AsyncFor, wrap_exceptio
     iterable = await self.visit(node.iter, wrap_exceptions=wrap_exceptions)
     broke = False
     
+    # Check if we're inside a generator
+    is_in_generator = (hasattr(self, 'generator_context') and 
+                      self.generator_context.get('active', False))
+    
     if hasattr(iterable, '__aiter__'):
         async for value in iterable:
             logger.debug("AsyncFor iteration with value: %s", value)
@@ -99,6 +103,15 @@ async def visit_AsyncFor(self: ASTInterpreter, node: ast.AsyncFor, wrap_exceptio
                 except ContinueException:
                     logger.debug("Continue in AsyncFor")
                     break  # Break from stmt loop to continue with next iteration
+                except YieldException as ye:
+                    # If we're inside a generator, we need to handle yields specially
+                    if is_in_generator:
+                        # Mark that this statement (the async for loop) should not advance
+                        # to the next statement after the yield
+                        self.generator_context['loop_suspended'] = True
+                        logger.debug("AsyncFor suspended due to yield in generator")
+                    # Re-raise the YieldException to let the generator handle it
+                    raise ye
             
             if broke:
                 break
