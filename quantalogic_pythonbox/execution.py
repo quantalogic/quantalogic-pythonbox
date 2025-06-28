@@ -335,7 +335,7 @@ async def _async_execute_async(
             error=error_str,
             execution_time=time.time() - start_time
         )
-    except (RuntimeError, TypeError, AttributeError, ImportError) as e:
+    except (RuntimeError, TypeError, AttributeError, ImportError, NameError) as e:
         error_type = type(getattr(e, 'original_exception', e)).__name__
         error_msg = f'{error_type}: {str(e)}'
         if hasattr(e, 'lineno') and hasattr(e, 'col_offset'):
