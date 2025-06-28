@@ -174,7 +174,22 @@ async def visit_Call(self: ASTInterpreter, node: ast.Call, is_await_context: boo
     elif asyncio.iscoroutinefunction(func) or isinstance(func, (AsyncFunction, AsyncGeneratorFunction)):
         result = func(*evaluated_args, **kwargs)
         if not is_await_context:
-            result = await result
+            # For built-in coroutine functions (like asyncio.sleep), return the actual coroutine
+            # For AsyncGeneratorFunction, always return the actual async generator object
+            # For AsyncFunction, return a mock coroutine to simulate non-awaited behavior
+            if isinstance(func, AsyncGeneratorFunction):
+                # Async generators should always return the generator object
+                return result
+            elif isinstance(func, AsyncFunction):
+                from .mock_coroutine import MockCoroutine
+                return MockCoroutine(func, evaluated_args, kwargs)
+            else:
+                # This is a built-in async function like asyncio.sleep
+                return result
+        else:
+            # In await context, return the coroutine itself, don't await it here
+            # The visit_Await function will handle the awaiting
+            return result
     elif isinstance(func, Function):
         if func.node.name == "__init__":
             await func(*evaluated_args, **kwargs)

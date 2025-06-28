@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from .interpreter_core import ASTInterpreter
 from .function_utils import Function, AsyncFunction, AsyncGeneratorFunction
-from .exceptions import WrappedException
+from .exceptions import WrappedException, YieldException
 
 # Configure logging
 logger = logging.getLogger(__name__)

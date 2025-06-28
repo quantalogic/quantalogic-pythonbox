@@ -8,7 +8,7 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from .interpreter_core import ASTInterpreter
-from .exceptions import ReturnException
+from .exceptions import ReturnException, YieldException
 from .generator_wrapper import GeneratorWrapper
 
 # Configure logging
@@ -147,6 +147,9 @@ class Function:
                     except ReturnException as ret:
                         return_value = ret.value
                         break
+                    except YieldException as yld:
+                        values.append(yld.value)
+                        continue
                         
                 # Create a generator that includes the return value
                 def gen_with_return():

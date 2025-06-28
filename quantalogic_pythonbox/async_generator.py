@@ -29,7 +29,7 @@ class AsyncGeneratorFunction:
         self.pos_defaults = pos_defaults
         self.kw_defaults = kw_defaults
 
-    async def __call__(self, *args: Any, **kwargs: Any) -> Any:
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
         logger.debug(f"Starting AsyncGeneratorFunction {self.node.name}")
         
         # Set up the environment for the generator
