@@ -198,12 +198,28 @@ async def _match_pattern(self: ASTInterpreter, subject: Any, pattern: ast.AST) -
         cls = await self.visit(pattern.cls, wrap_exceptions=True)
         if not isinstance(subject, cls):
             return False
-        attrs = [getattr(subject, attr) for attr in pattern.attribute_names]
-        if len(attrs) != len(pattern.patterns):
-            return False
-        for attr_val, pat in zip(attrs, pattern.patterns):
-            if not await self._match_pattern(attr_val, pat):
+        
+        # Handle positional patterns
+        if pattern.patterns:
+            if hasattr(cls, '__match_args__'):
+                attrs = [getattr(subject, attr) for attr in cls.__match_args__[:len(pattern.patterns)]]
+                if len(attrs) != len(pattern.patterns):
+                    return False
+                for attr_val, pat in zip(attrs, pattern.patterns):
+                    if not await self._match_pattern(attr_val, pat):
+                        return False
+            else:
                 return False
+        
+        # Handle keyword patterns
+        if pattern.kwd_attrs:
+            for attr_name, pat in zip(pattern.kwd_attrs, pattern.kwd_patterns):
+                if not hasattr(subject, attr_name):
+                    return False
+                attr_val = getattr(subject, attr_name)
+                if not await self._match_pattern(attr_val, pat):
+                    return False
+        
         return True
     elif isinstance(pattern, ast.MatchStar):
         if pattern.name:

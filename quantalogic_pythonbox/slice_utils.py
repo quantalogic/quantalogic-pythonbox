@@ -23,7 +23,7 @@ class CustomSlice:
         """
         Return formal representation of the slice with custom formatting.
         """
-        return self.__str__()
+        return f"CustomSlice(start={self.start}, stop={self.stop}, step={self.step})"
     
     def __eq__(self, other):
         """
@@ -66,3 +66,15 @@ class CustomSlice:
             stop = length
             
         return (start, stop, step)
+
+    def __getitem__(self, key):
+        if key == 0:
+            return self.start
+        elif key == 1:
+            return self.stop
+        elif key == 2:
+            return self.step
+        elif isinstance(key, int):
+            raise IndexError("CustomSlice index out of range")
+        else:
+            raise TypeError("CustomSlice indices must be integers")

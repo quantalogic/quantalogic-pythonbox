@@ -13,11 +13,14 @@ from .exceptions import WrappedException, YieldException
 # Configure logging
 logger = logging.getLogger(__name__)
 
+import traceback
+
 @dataclass
 class AsyncExecutionResult:
     result: Any
     error: Optional[str]
     execution_time: float
+    exception: Optional[Exception] = None
     local_variables: Optional[Dict[str, Any]] = None
 
 class ControlledEventLoop:
@@ -306,12 +309,14 @@ async def _async_execute_async(
         return AsyncExecutionResult(
             result=None,
             error=f'{type(e).__name__}: {str(e)}',
+            exception=e,
             execution_time=time.time() - start_time
         )
     except asyncio.TimeoutError as e:
         return AsyncExecutionResult(
             result=None,
             error=f'TimeoutError: Execution exceeded {timeout} seconds: {str(e)}',
+            exception=e,
             execution_time=time.time() - start_time
         )
     except WrappedException as e:
@@ -326,6 +331,7 @@ async def _async_execute_async(
                 return AsyncExecutionResult(
                     result=return_value,
                     error=None,
+                    exception=e,
                     execution_time=time.time() - start_time
                 )
         
@@ -333,16 +339,18 @@ async def _async_execute_async(
         return AsyncExecutionResult(
             result=None,
             error=error_str,
+            exception=e,
             execution_time=time.time() - start_time
         )
-    except (RuntimeError, TypeError, AttributeError, ImportError, NameError) as e:
-        error_type = type(getattr(e, 'original_exception', e)).__name__
+    except Exception as e: # Catch all other exceptions
+        error_type = type(e).__name__
         error_msg = f'{error_type}: {str(e)}'
         if hasattr(e, 'lineno') and hasattr(e, 'col_offset'):
             error_msg += f' at line {e.lineno}, col {e.col_offset}'
         return AsyncExecutionResult(
             result=None,
             error=error_msg,
+            exception=e,
             execution_time=time.time() - start_time
         )
     finally:

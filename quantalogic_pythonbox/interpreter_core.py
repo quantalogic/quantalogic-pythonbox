@@ -114,7 +114,6 @@ class ASTInterpreter:
             'isinstance': isinstance,
             'type': type,
             'dir': dir,
-            'getattr': getattr,
             'setattr': setattr,
             'delattr': delattr,
             'callable': callable,
