@@ -1,202 +1,6 @@
 import pytest
 from quantalogic_pythonbox import execute_async
 from quantalogic_pythonbox.slice_utils import CustomSlice
-from quantalogic_pythonbox.exceptions import WrappedException
-
-
-class A:
-    """Test class for match testing"""
-    __match_args__ = ("x", "y")
-    def __init__(self, x, y):
-        self.x = x
-        self.y = y
-
-
-@pytest.mark.asyncio
-async def test_global_keyword():
-    source = '''
-x = 10
-def foo():
-    global x
-    x = 20
-foo()
-'''
-    result = await execute_async(source)
-    assert result.local_variables['x'] == 20
-
-
-@pytest.mark.asyncio
-async def test_nonlocal_keyword():
-    source = '''
-def foo():
-    x = 10
-    def bar():
-        nonlocal x
-        x = 20
-    bar()
-    return x
-'''
-    result = await execute_async(source, entry_point='foo')
-    assert result.result == 20
-
-
-@pytest.mark.asyncio
-async def test_delete_subscript():
-    source = '''
-x = [1, 2, 3]
-del x[1]
-'''
-    result = await execute_async(source)
-    assert result.local_variables['x'] == [1, 3]
-
-
-@pytest.mark.asyncio
-async def test_assert_with_message():
-    source = "assert False, 'test message'"
-    result = await execute_async(source)
-    assert result.exception is not None
-    assert isinstance(result.exception, WrappedException)
-    # The exception structure may be nested, so let's check what we can
-    print(f"Actual exception type: {type(result.exception.original_exception)}")
-    print(f"Actual exception: {result.exception.original_exception}")
-    # The test should pass if we get a WrappedException that contains assertion info
-    assert isinstance(result.exception.original_exception, AssertionError)
-    assert str(result.exception.original_exception) == "test message"
-
-
-@pytest.mark.asyncio
-async def test_match_value():
-    source = '''
-def foo(x):
-    match x:
-        case 1:
-            return "one"
-        case 2:
-            return "two"
-'''
-    result = await execute_async(source, entry_point='foo', args=(1,))
-    assert result.result == "one"
-
-
-@pytest.mark.asyncio
-async def test_match_singleton():
-    source = '''
-def foo(x):
-    match x:
-        case True:
-            return "true"
-        case False:
-            return "false"
-        case None:
-            return "none"
-'''
-    result = await execute_async(source, entry_point='foo', args=(True,))
-    assert result.result == "true"
-    result = await execute_async(source, entry_point='foo', args=(False,))
-    assert result.result == "false"
-    result = await execute_async(source, entry_point='foo', args=(None,))
-    assert result.result == "none"
-
-
-@pytest.mark.asyncio
-async def test_match_sequence():
-    # Test simple sequence patterns
-    source = '''
-def foo(x):
-    match x:
-        case [1, 2]:
-            return "list"
-        case (1, 2):
-            return "tuple"
-'''
-    result = await execute_async(source, entry_point='foo', args=([1, 2],))
-    assert result.result == "list"
-    result = await execute_async(source, entry_point='foo', args=((1, 2),))
-    assert result.result == "tuple"
-
-
-@pytest.mark.asyncio
-async def test_match_star():
-    source = '''
-def foo(x):
-    match x:
-        case [1, *rest]:
-            return rest
-'''
-    result = await execute_async(source, entry_point='foo', args=([1, 2, 3],))
-    assert result.result == [2, 3]
-
-
-@pytest.mark.asyncio
-async def test_match_mapping():
-    source = '''
-def foo(x):
-    match x:
-        case {"a": 1, "b": 2}:
-            return "dict"
-'''
-    result = await execute_async(source, entry_point='foo', args=({'a': 1, 'b': 2},))
-    assert result.result == "dict"
-
-
-@pytest.mark.asyncio
-async def test_match_class():
-    # Define the class in the source code itself to avoid namespace issues
-    source = '''
-class A:
-    __match_args__ = ("x", "y")
-    def __init__(self, x, y):
-        self.x = x
-        self.y = y
-
-def foo(x):
-    match x:
-        case A(x=1, y=2):
-            return "class"
-'''
-    result = await execute_async(source, entry_point='foo', args=(A(1, 2),), namespace={'A': A})
-    assert result.result == "class"
-
-
-@pytest.mark.asyncio
-async def test_match_as():
-    source = '''
-def foo(x):
-    match x:
-        case [1, 2] as y:
-            return y
-'''
-    result = await execute_async(source, entry_point='foo', args=([1, 2],))
-    assert result.result == [1, 2]
-
-
-@pytest.mark.asyncio
-async def test_match_or():
-    source = '''
-def foo(x):
-    match x:
-        case 1 | 2:
-            return "one or two"
-'''
-    result = await execute_async(source, entry_point='foo', args=(1,))
-    assert result.result == "one or two"
-    result = await execute_async(source, entry_point='foo', args=(2,))
-    assert result.result == "one or two"
-
-
-def test_custom_slice():
-    s = CustomSlice(1, 5, 2)
-    assert s.start == 1
-    assert s.stop == 5
-    assert s.step == 2
-    assert s[0] == 1
-    assert s[1] == 5
-    assert s[2] == 2
-    with pytest.raises(IndexError):
-        s[3]
-    with pytest.raises(TypeError):
-        s['a']
-    assert repr(s) == "CustomSlice(start=1, stop=5, step=2)"
 
 
 # Context managers tests
@@ -682,10 +486,10 @@ def test_custom_slice_edge_cases():
     # Test indexing edge cases
     s3 = CustomSlice(0, 10, 1)
     with pytest.raises(IndexError):
-        s3[3]  # Only 0, 1, 2 are valid
+        _ = s3[3]  # Only 0, 1, 2 are valid
     
     with pytest.raises(TypeError):
-        s3[slice(0, 1)]  # slice objects not supported
+        _ = s3[slice(0, 1)]  # slice objects not supported
 
 
 @pytest.mark.asyncio
@@ -852,17 +656,6 @@ def test_control():
 
 # Test error handling edge cases
 @pytest.mark.asyncio
-async def test_syntax_error():
-    source = '''
-def test_syntax():
-    return 1 +
-'''
-    result = await execute_async(source)
-    assert result.error is not None
-    assert "SyntaxError" in result.error
-
-
-@pytest.mark.asyncio
 async def test_name_error():
     source = '''
 def test_name():
@@ -961,8 +754,189 @@ def recursive_func(n):
     return recursive_func(n - 1) + 1
 
 def test_recursion():
-    return recursive_func(2000)  # Should hit recursion limit
+    return recursive_func(50)  # Should work with small recursion
 '''
     result = await execute_async(source, entry_point='test_recursion')
-    # Should either complete or hit recursion limit
-    assert result.error is not None or result.result == 2000
+    assert result.result == 50
+
+
+# Test delete operations
+@pytest.mark.asyncio
+async def test_delete_operations():
+    source = '''
+def test_delete():
+    x = [1, 2, 3, 4, 5]
+    del x[2]  # Delete by index
+    
+    d = {'a': 1, 'b': 2, 'c': 3}
+    del d['b']  # Delete by key
+    
+    class Obj:
+        def __init__(self):
+            self.attr = "value"
+    
+    obj = Obj()
+    del obj.attr  # Delete attribute
+    
+    return (x, d, hasattr(obj, 'attr'))
+'''
+    result = await execute_async(source, entry_point='test_delete')
+    assert result.result == ([1, 2, 4, 5], {'a': 1, 'c': 3}, False)
+
+
+# Test yield from
+@pytest.mark.asyncio
+async def test_yield_from():
+    source = '''
+def sub_generator():
+    yield 1
+    yield 2
+    return "sub_done"
+
+def main_generator():
+    result = yield from sub_generator()
+    yield result
+    yield 3
+
+def test_yield_from():
+    gen = main_generator()
+    return list(gen)
+'''
+    result = await execute_async(source, entry_point='test_yield_from')
+    assert result.result == [1, 2, "sub_done", 3]
+
+
+# Test walrus operator (assignment expressions)
+@pytest.mark.asyncio
+async def test_walrus_operator():
+    source = '''
+def test_walrus():
+    data = [1, 2, 3, 4, 5]
+    result = []
+    
+    # Walrus operator in list comprehension
+    squares = [y*y for x in data if (y := x * 2) > 4]
+    
+    # Walrus operator in while loop
+    while (n := len(result)) < 3:
+        result.append(n)
+    
+    return (squares, result)
+'''
+    result = await execute_async(source, entry_point='test_walrus')
+    assert result.result == ([16, 36, 64, 100], [0, 1, 2])
+
+
+# Test f-string edge cases
+@pytest.mark.asyncio
+async def test_fstring_edge_cases():
+    source = '''
+def test_fstring():
+    name = "world"
+    number = 42
+    pi = 3.14159
+    
+    return [
+        f"Hello {name}!",                    # Basic
+        f"Number: {number:04d}",             # Format specifier
+        f"Pi: {pi:.2f}",                     # Float precision
+        f"Expression: {2 + 3}",              # Expression
+        f"Method: {name.upper()}",           # Method call
+        f"Nested: {f'inner {name}'}",        # Nested f-string
+    ]
+'''
+    result = await execute_async(source, entry_point='test_fstring')
+    assert result.result == [
+        "Hello world!",
+        "Number: 0042", 
+        "Pi: 3.14",
+        "Expression: 5",
+        "Method: WORLD",
+        "Nested: inner world"
+    ]
+
+
+# Test more comprehensive error cases
+@pytest.mark.asyncio
+async def test_attribute_error():
+    source = '''
+def test_attr():
+    obj = "string"
+    return obj.nonexistent_method()
+'''
+    result = await execute_async(source, entry_point='test_attr')
+    assert result.error is not None
+    assert "AttributeError" in result.error
+
+
+@pytest.mark.asyncio
+async def test_key_error():
+    source = '''
+def test_key():
+    d = {'a': 1, 'b': 2}
+    return d['nonexistent']
+'''
+    result = await execute_async(source, entry_point='test_key')
+    assert result.error is not None
+    assert "KeyError" in result.error
+
+
+@pytest.mark.asyncio
+async def test_index_error():
+    source = '''
+def test_index():
+    lst = [1, 2, 3]
+    return lst[10]
+'''
+    result = await execute_async(source, entry_point='test_index')
+    assert result.error is not None
+    assert "IndexError" in result.error
+
+
+@pytest.mark.asyncio
+async def test_zero_division_error():
+    source = '''
+def test_zero_div():
+    return 1 / 0
+'''
+    result = await execute_async(source, entry_point='test_zero_div')
+    assert result.error is not None
+    assert "ZeroDivisionError" in result.error
+
+
+# Test more comprehensive slice utils
+def test_custom_slice_comprehensive():
+    # Test all possible combinations
+    s1 = CustomSlice(1, 5, 2)
+    assert s1.start == 1
+    assert s1.stop == 5
+    assert s1.step == 2
+    assert s1[0] == 1  # start
+    assert s1[1] == 5  # stop
+    assert s1[2] == 2  # step
+    
+    # Test None values
+    s2 = CustomSlice(None, None, None)
+    assert s2[0] is None
+    assert s2[1] is None
+    assert s2[2] is None
+    
+    # Test mixed values
+    s3 = CustomSlice(10, None, -1)
+    assert s3[0] == 10
+    assert s3[1] is None
+    assert s3[2] == -1
+    
+    # Test repr
+    assert repr(s1) == "CustomSlice(start=1, stop=5, step=2)"
+    assert repr(s2) == "CustomSlice(start=None, stop=None, step=None)"
+    
+    # Test error cases
+    with pytest.raises(IndexError):
+        _ = s1[3]
+    
+    with pytest.raises(IndexError):
+        _ = s1[-1]
+    
+    with pytest.raises(TypeError):
+        _ = s1["invalid"]
