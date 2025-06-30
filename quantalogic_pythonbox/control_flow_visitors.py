@@ -1,4 +1,5 @@
 import ast
+import asyncio
 from typing import Any
 
 from .exceptions import BreakException, ContinueException, ReturnException
@@ -78,7 +79,30 @@ async def visit_AsyncFor(self: ASTInterpreter, node: ast.AsyncFor, wrap_exceptio
         if is_in_generator and aiterator_key in self.generator_context:
             aiterator = self.generator_context[aiterator_key]
         else:
-            aiterator = iterable.__aiter__()
+            # Call __aiter__ method properly
+            aiter_method = getattr(iterable, '__aiter__')
+            
+            # Special handling for __aiter__ - it should return the object synchronously
+            from .function_base import Function
+            if isinstance(aiter_method, Function):
+                # For __aiter__, we need to call it and get the result
+                try:
+                    result = await aiter_method()
+                    # __aiter__ should typically return self, so check the result
+                    aiterator = result
+                except Exception:
+                    # Fallback: just return the iterable itself (common pattern for __aiter__)
+                    aiterator = iterable
+            elif callable(aiter_method):
+                # Execute the method normally
+                result = aiter_method()
+                # If it's a coroutine, await it
+                if asyncio.iscoroutine(result):
+                    aiterator = await result
+                else:
+                    aiterator = result
+            else:
+                aiterator = aiter_method
             if is_in_generator:
                 self.generator_context[aiterator_key] = aiterator
         
@@ -119,9 +143,28 @@ async def visit_AsyncFor(self: ASTInterpreter, node: ast.AsyncFor, wrap_exceptio
         try:
             while True:
                 try:
-                    value = await aiterator.__anext__()
+                    # Get __anext__ method and call it properly
+                    anext_method = getattr(aiterator, '__anext__')
+                    from .function_base import Function
+                    if isinstance(anext_method, Function):
+                        value = await anext_method()
+                    else:
+                        value = await anext_method()
                 except StopAsyncIteration:
                     break
+                except Exception as e:
+                    # Check if this is a wrapped StopAsyncIteration
+                    from .exceptions import WrappedException
+                    if isinstance(e, WrappedException):
+                        # Check if the underlying exception is StopAsyncIteration
+                        inner_exc = e.original_exception if hasattr(e, 'original_exception') else None
+                        if inner_exc is not None and isinstance(inner_exc, StopAsyncIteration):
+                            break
+                        # Check if the description contains StopAsyncIteration
+                        elif "StopAsyncIteration" in str(e):
+                            break
+                    # Re-raise other exceptions
+                    raise
                     
                 await self.assign(node.target, value)
                 
