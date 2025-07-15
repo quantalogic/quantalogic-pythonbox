@@ -3,6 +3,7 @@
 Welcome to the **Quantalogic Python Sandbox**, a secure and extensible environment for executing Python code asynchronously, paired with the **CodeAct Agent**, a ReAct-based framework for task-solving using language models and tools. This project, developed as part of the `quantalogic_pythonbox` package, provides a robust sandbox for interpreting Python Abstract Syntax Trees (AST) and a demonstration of an autonomous agent capable of reasoning and acting on tasks.
 
 ## Table of Contents
+
 1. [Overview](#overview)
 2. [Features](#features)
 3. [Installation](#installation)
@@ -69,12 +70,14 @@ The sandbox ensures that code runs safely and efficiently, making it ideal for u
 ## CodeAct Agent Explained
 
 The **CodeAct Agent** is an implementation of the ReAct framework, which combines **reasoning** (via a language model) and **acting** (via tool execution) to solve tasks iteratively. Introduced by Yao et al. in their 2022 paper ["ReAct: Synergizing Reasoning and Acting in Language Models"](https://arxiv.org/abs/2210.03629), ReAct enables agents to:
+
 1. **Reason**: Analyze the task and plan the next step.
 2. **Act**: Execute actions using predefined tools.
 3. **Observe**: Incorporate results into the reasoning process.
 4. **Repeat**: Continue until the task is solved or a limit is reached.
 
 ### How CodeAct Works
+
 - **Task Input**: The agent receives a task (e.g., "Calculate 5 + 3").
 - **Toolset**: A collection of callable tools (e.g., `add_tool`, `wiki_tool`) is provided.
 - **ReAct Loop**: For up to `max_steps` iterations:
@@ -86,6 +89,7 @@ The **CodeAct Agent** is an implementation of the ReAct framework, which combine
 - **Output**: The final answer or an error if the task isn't solved within `max_steps`.
 
 ### Benefits
+
 - **Flexibility**: Tools can be simple (e.g., arithmetic) or complex (e.g., Wikipedia search).
 - **Traceability**: Each step is logged and displayed, making the process transparent.
 - **Scalability**: Easily extend with new tools or integrate with different models.
@@ -97,11 +101,14 @@ The **CodeAct Agent** is an implementation of the ReAct framework, which combine
 The `demo/code_act_agent.py` script demonstrates the CodeAct Agent within the Python Sandbox. It defines a CLI application using `typer` and integrates tools with a ReAct loop.
 
 ### Key Components
+
 1. **Tool Creation (`make_tool`)**:
+
    - Converts Python functions into tools with metadata (name, description, argument types).
    - Example: `add_tool` from `async def add(a: int, b: int) -> int`.
 
 2. **Defined Tools**:
+
    - `add_tool`: Adds two integers.
    - `multiply_tool`: Multiplies two integers.
    - `concat_tool`: Concatenates two strings.
@@ -109,6 +116,7 @@ The `demo/code_act_agent.py` script demonstrates the CodeAct Agent within the Py
    - `agent_tool`: Wraps the language model for text generation.
 
 3. **ReAct Loop (`generate_core`)**:
+
    - Takes a task, model, and step/token limits as input.
    - Iteratively prompts the model, parses responses, and executes tools.
    - Logs actions and results using `loguru`.
@@ -118,6 +126,7 @@ The `demo/code_act_agent.py` script demonstrates the CodeAct Agent within the Py
    - Outputs steps and the final answer in a colored `typer` interface.
 
 ### Code Highlights
+
 ```python
 async def generate_core(task: str, model: str, max_tokens: int, max_steps: int = 10):
     tools = [
@@ -138,10 +147,13 @@ async def generate_core(task: str, model: str, max_tokens: int, max_steps: int =
 ```
 
 ### Running the Demo
+
 ```bash
 uv run demo/code_act_agent.py generate "What is 5 + 3?" --model "gemini/gemini-2.0-flash"
 ```
+
 **Output**:
+
 ```
 Starting ReAct Agent Loop:
 Step 1: Action: add_tool(a=5, b=3)
@@ -158,28 +170,37 @@ This shows the agent reasoning that it needs to add 5 and 3, executing `add_tool
 ## Usage Examples
 
 ### Simple Arithmetic
+
 ```bash
 uv run demo/code_act_agent.py generate "Calculate 5 * 4 + 2"
 ```
+
 The agent might:
+
 1. Multiply 5 and 4 (`multiply_tool`) → 20.
 2. Add 2 (`add_tool`) → 22.
 3. Stop with "22".
 
 ### Wikipedia Search
+
 ```bash
 uv run demo/code_act_agent.py generate "What is the capital of France?"
 ```
+
 The agent uses `wiki_tool(query='France')` to fetch the Wikipedia intro, extracts "Paris," and stops.
 
 ### Custom Tools
+
 Add a new tool in `code_act_agent.py`:
+
 ```python
 async def subtract(a: int, b: int) -> int:
     return a - b
 tools.append(make_tool(subtract, "subtract_tool", "Subtracts b from a."))
 ```
+
 Then run:
+
 ```bash
 uv run demo/code_act_agent.py generate "What is 10 - 7?"
 ```
@@ -199,6 +220,7 @@ uv run demo/code_act_agent.py generate "What is 10 - 7?"
 ## Contributing
 
 Contributions are welcome! To contribute:
+
 1. Fork the repository.
 2. Create a feature branch (`git checkout -b feature/new-tool`).
 3. Commit changes (`git commit -m "Add new tool"`).
